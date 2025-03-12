@@ -312,3 +312,7 @@ async def root():
             {"path": "/health", "method": "GET", "description": "Health check"}
         ]
     }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

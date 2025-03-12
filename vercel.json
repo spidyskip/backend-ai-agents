@@ -1,9 +1,21 @@
 {
-  "buildCommand": "uvicorn app.main:app",
   "builds": [
-    { "src": "*.py", "use": "@vercel/python" }
+    {
+      "src": "app/main.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "app/main.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "app/main.py"
+    }
   ],
   "env": {
-      "PYTHONPATH": "."
+    "PYTHONPATH": "./app"
   }
 }

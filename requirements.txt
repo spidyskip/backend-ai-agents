@@ -1,0 +1,16 @@
+fastapi>=0.100.0
+uvicorn>=0.22.0
+sqlalchemy>=2.0.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-dotenv>=1.0.0
+langchain>=0.0.300
+langchain-anthropic>=0.0.8
+langchain-openai>=0.0.5
+langchain-google-genai>=0.0.3
+langgraph>=0.0.20
+requests>=2.31.0
+pytest>=7.3.1
+httpx>=0.24.1
+python-multipart>=0.0.6
+

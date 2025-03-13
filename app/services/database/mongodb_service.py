@@ -1,4 +1,5 @@
-import pymongo
+from pymongo.mongo_client import MongoClient
+from pymongo.server_api import ServerApi
 import logging
 from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
@@ -14,7 +15,7 @@ class MongoDBService(DatabaseInterface):
     
     def __init__(self):
         """Initialize the MongoDB service with credentials from settings."""
-        self.client = pymongo.MongoClient(settings.MONGODB_URI)
+        self.client = MongoClient(settings.MONGODB_URI, server_api=ServerApi('1'))
         self.db = self.client[settings.MONGODB_DB_NAME]
         self.agents_collection = self.db["agents"]
         self.conversations_collection = self.db["conversations"]

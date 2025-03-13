@@ -8,7 +8,7 @@
   ],
   "routes": [
     {
-      "src": "/(.*)",
+      "src": "/app/(.*)",
       "dest": "run.py"
     }
   ],
@@ -19,11 +19,5 @@
     "LOG_LEVEL": "INFO",
     "VERCEL": "true",
     "FUNCTION_TIMEOUT": "60"
-  },
-  "functions": {
-    "run.py": {
-      "memory": 1024,
-      "maxDuration": 60
-    }
   }
 }

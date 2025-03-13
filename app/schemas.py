@@ -25,7 +25,7 @@ class AgentResponse(AgentBase):
     agent_id: str
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # Chat request schema
 class ChatRequest(BaseModel):
@@ -55,7 +55,7 @@ class ConversationSchema(BaseModel):
     updated_at: Optional[datetime] = None
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # Message base schema
 class MessageBase(BaseModel):
@@ -73,7 +73,7 @@ class MessageSchema(MessageBase):
     created_at: datetime
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # Agent schema for nested relationships
 class AgentNestedSchema(BaseModel):
@@ -86,7 +86,7 @@ class AgentNestedSchema(BaseModel):
     keywords: List[str]
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # Conversation with messages schema
 class ConversationWithMessages(BaseModel):
@@ -99,4 +99,4 @@ class ConversationWithMessages(BaseModel):
     agent: Optional[AgentNestedSchema] = None
     
     class Config:
-        orm_mode = True
+        from_attributes = True

@@ -5,30 +5,30 @@ import logging
 # Add the parent directory to the path so we can import the app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.database import get_db
+from app.database import get_db_service
 from app.services.agent_manager import AgentManager
-from app.models import AgentConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def init_db():
     """Initialize the database with sample agents"""
-    db = next(get_db())
-    
     try:
+        # Get database service
+        db_service = get_db_service()
+        
         agents = {}
         
         # Check if agents already exist
-        existing_agents = db.query(AgentConfig).all()
+        existing_agents = db_service.list_agents()
         if existing_agents:
             logger.info(f"Found {len(existing_agents)} existing agents in the database.")
             for agent in existing_agents:
-                logger.info(f"Agent {agent.id} already exists.")
+                logger.info(f"Agent {agent['id']} already exists.")
             
             # Load existing agents into memory
-            AgentManager.load_agents_from_db(db)
-            return {agent.id: {"name": agent.name} for agent in existing_agents}
+            AgentManager.load_agents_from_db()
+            return {agent["id"]: {"name": agent["name"]} for agent in existing_agents}
         
         # Create a weather agent
         try:
@@ -37,8 +37,7 @@ def init_db():
                 name="Weather Assistant",
                 prompt="You are a helpful assistant that specializes in providing weather information. Always be concise and accurate.",
                 model_name="gemini-2.0-flash",
-                tool_names=["calculator"],
-                db=db,
+                tool_names=["search"],
                 categories=["weather", "climate", "forecast"],
                 keywords=["weather", "temperature", "forecast", "rain", "snow", "sunny", "cloudy", "humidity", "wind"]
             )
@@ -55,7 +54,6 @@ def init_db():
                 prompt="You are a math expert that helps solve mathematical problems. Show your work step by step.",
                 model_name="gemini-2.0-flash",
                 tool_names=["calculator"],
-                db=db,
                 categories=["math", "calculation", "algebra", "geometry"],
                 keywords=["calculate", "solve", "equation", "math", "formula", "computation", "problem"]
             )
@@ -71,9 +69,8 @@ def init_db():
                 name="General Knowledge Assistant",
                 prompt="You are a helpful assistant with broad knowledge. Provide accurate and informative responses.",
                 model_name="gemini-2.0-flash",
-                tool_names=["search", "database_lookup"],
-                db=db,
-                categories=["general", "knowledge", "information"],
+                tool_names=["search"],
+                categories=["general", "knowledge", "information", "news"],
                 keywords=["what", "who", "when", "where", "why", "how", "explain", "describe", "tell"]
             )
             logger.info(f"Created general agent: {general_agent['name']}")
@@ -88,8 +85,7 @@ def init_db():
                 name="Gemini Assistant",
                 prompt="You are a helpful assistant powered by Google's Gemini model. Provide accurate and informative responses.",
                 model_name="gemini-2.0-flash",
-                tool_names=["database_lookup"],
-                db=db,
+                tool_names=["search", "calculator", "database_lookup"],
                 categories=["general", "knowledge", "information"],
                 keywords=["gemini", "google", "ai", "assistant"]
             )

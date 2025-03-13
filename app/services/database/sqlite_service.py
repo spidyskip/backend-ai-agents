@@ -41,6 +41,7 @@ class SQLiteService(DatabaseInterface):
             "tools": list(agent.tools) if agent.tools is not None and hasattr(agent.tools, '__iter__') else [],
             "categories": list(agent.categories) if agent.categories is not None and hasattr(agent.categories, '__iter__') else [],
             "keywords": list(agent.keywords) if agent.keywords is not None and hasattr(agent.keywords, '__iter__') else [],
+            "additional_info": agent.additional_info if hasattr(agent, 'additional_info') else {},
             "created_at": agent.created_at,
             "updated_at": agent.updated_at
         }
@@ -67,7 +68,8 @@ class SQLiteService(DatabaseInterface):
             model_name=agent_data["model_name"],
             tools=agent_data.get("tools", []),
             categories=agent_data.get("categories", []),
-            keywords=agent_data.get("keywords", [])
+            keywords=agent_data.get("keywords", []),
+            additional_info=agent_data.get("additional_info", {})
         )
         
         self.db.add(agent)
@@ -103,6 +105,8 @@ class SQLiteService(DatabaseInterface):
             agent.categories = agent_data["categories"]
         if "keywords" in agent_data:
             agent.keywords = agent_data["keywords"]
+        if "additional_info" in agent_data:
+            agent.additional_info = agent_data["additional_info"]
         
         self.db.commit()
         return True
@@ -142,6 +146,7 @@ class SQLiteService(DatabaseInterface):
                 "tools": list(agent.tools) if agent.tools is not None and hasattr(agent.tools, '__iter__') else [],
                 "categories": list(agent.categories) if agent.categories is not None and hasattr(agent.categories, '__iter__') else [],
                 "keywords": list(agent.keywords) if agent.keywords is not None and hasattr(agent.keywords, '__iter__') else [],
+                "additional_info": agent.additional_info if hasattr(agent, 'additional_info') else {},
                 "created_at": agent.created_at,
                 "updated_at": agent.updated_at
             }
@@ -188,7 +193,7 @@ class SQLiteService(DatabaseInterface):
         
         Args:
             conversation_data: The conversation data to insert.
-            
+        
         Returns:
             The ID of the created conversation.
         """
@@ -200,6 +205,7 @@ class SQLiteService(DatabaseInterface):
         conversation = Conversation(
             id=conversation_data["id"],
             agent_id=conversation_data.get("agent_id"),
+            user_id=conversation_data.get("user_id"),  # Add user_id
             title=conversation_data.get("title")
         )
         
@@ -215,7 +221,7 @@ class SQLiteService(DatabaseInterface):
         Args:
             conversation_id: The ID of the conversation to update.
             conversation_data: The new conversation data.
-            
+        
         Returns:
             True if successful, False otherwise.
         """
@@ -226,6 +232,8 @@ class SQLiteService(DatabaseInterface):
         # Update fields
         if "agent_id" in conversation_data:
             conversation.agent_id = conversation_data["agent_id"]
+        if "user_id" in conversation_data:  # Add user_id
+            conversation.user_id = conversation_data["user_id"]
         if "title" in conversation_data:
             conversation.title = conversation_data["title"]
         
@@ -235,12 +243,13 @@ class SQLiteService(DatabaseInterface):
         self.db.commit()
         return True
     
-    def list_conversations(self, agent_id: Optional[str] = None, skip: int = 0, limit: int = 10) -> List[Dict[str, Any]]:
+    def list_conversations(self, agent_id: Optional[str] = None, user_id: Optional[str] = None, skip: int = 0, limit: int = 10) -> List[Dict[str, Any]]:
         """
-        List conversations, optionally filtered by agent ID.
+        List conversations, optionally filtered by agent_id or user_id.
         
         Args:
             agent_id: Optional agent ID to filter by.
+            user_id: Optional user ID to filter by.
             skip: Number of records to skip.
             limit: Maximum number of records to return.
             
@@ -250,6 +259,8 @@ class SQLiteService(DatabaseInterface):
         query = self.db.query(Conversation)
         if agent_id:
             query = query.filter(Conversation.agent_id == agent_id)
+        if user_id:
+            query = query.filter(Conversation.user_id == user_id)
         
         conversations = query.order_by(Conversation.updated_at.desc()).offset(skip).limit(limit).all()
         
@@ -257,6 +268,7 @@ class SQLiteService(DatabaseInterface):
             {
                 "id": conversation.id,
                 "agent_id": conversation.agent_id,
+                "user_id": conversation.user_id,
                 "title": conversation.title,
                 "created_at": conversation.created_at,
                 "updated_at": conversation.updated_at

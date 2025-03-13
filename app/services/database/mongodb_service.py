@@ -195,21 +195,24 @@ class MongoDBService(DatabaseInterface):
         
         return result.modified_count > 0
     
-    def list_conversations(self, agent_id: Optional[str] = None, skip: int = 0, limit: int = 10) -> List[Dict[str, Any]]:
+    def list_conversations(self, agent_id: Optional[str] = None, user_id: Optional[str] = None, skip: int = 0, limit: int = 10) -> List[Dict[str, Any]]:
         """
-        List conversations, optionally filtered by agent ID.
+        List conversations, optionally filtered by agent_id or user_id.
         
         Args:
             agent_id: Optional agent ID to filter by.
+            user_id: Optional user ID to filter by.
             skip: Number of documents to skip.
             limit: Maximum number of documents to return.
             
         Returns:
-            A list of conversation documents.
+        A list of conversation documents.
         """
         query = {}
         if agent_id:
             query["agent_id"] = agent_id
+        if user_id:
+            query["user_id"] = user_id
         
         return list(
             self.conversations_collection.find(query)

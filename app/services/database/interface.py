@@ -49,8 +49,8 @@ class DatabaseInterface(ABC):
         pass
     
     @abstractmethod
-    def list_conversations(self, agent_id: Optional[str] = None, skip: int = 0, limit: int = 10) -> List[Dict[str, Any]]:
-        """List conversations, optionally filtered by agent ID."""
+    def list_conversations(self, agent_id: Optional[str] = None, user_id: Optional[str] = None, skip: int = 0, limit: int = 10) -> List[Dict[str, Any]]:
+        """List conversations, optionally filtered by agent_id or user_id."""
         pass
     
     # Message operations

@@ -11,6 +11,7 @@ class AgentBase(BaseModel):
     tools: List[str]
     categories: Optional[List[str]] = None
     keywords: Optional[List[str]] = None
+    additional_info: Optional[Dict[str, Any]] = None
 
 # Create agent request schema
 class CreateAgentRequest(AgentBase):
@@ -25,13 +26,21 @@ class AgentResponse(AgentBase):
     agent_id: str
     
     class Config:
-        from_attributes = True
+        orm_mode = True
+
+# Update agent additional info request schema
+class UpdateAgentAdditionalInfoRequest(BaseModel):
+    additional_info: Dict[str, Any]
 
 # Chat request schema
 class ChatRequest(BaseModel):
     query: str
     agent_id: Optional[str] = None
     thread_id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: Optional[str] = None
+    user_info: Optional[Dict[str, Any]] = None
+    constraints: Optional[Dict[str, Any]] = None  # Add constraints parameter
+    include_history: bool = False  # Add option to include chat history
 
 # Chat response schema
 class ChatResponse(BaseModel):
@@ -44,18 +53,20 @@ class ChatResponse(BaseModel):
 # Create conversation schema
 class ConversationCreate(BaseModel):
     agent_id: str
+    user_id: Optional[str] = None
     title: Optional[str] = None
 
 # Conversation schema
 class ConversationSchema(BaseModel):
     id: str
     agent_id: str
+    user_id: Optional[str] = None
     title: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 # Message base schema
 class MessageBase(BaseModel):
@@ -73,7 +84,7 @@ class MessageSchema(MessageBase):
     created_at: datetime
     
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 # Agent schema for nested relationships
 class AgentNestedSchema(BaseModel):
@@ -84,9 +95,10 @@ class AgentNestedSchema(BaseModel):
     tools: List[str]
     categories: List[str]
     keywords: List[str]
+    additional_info: Optional[Dict[str, Any]] = None
     
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 # Conversation with messages schema
 class ConversationWithMessages(BaseModel):
@@ -99,4 +111,5 @@ class ConversationWithMessages(BaseModel):
     agent: Optional[AgentNestedSchema] = None
     
     class Config:
-        from_attributes = True
+        orm_mode = True
+

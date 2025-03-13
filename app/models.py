@@ -15,6 +15,7 @@ class AgentConfig(Base):
     tools = Column(JSON, nullable=False)
     categories = Column(JSON, nullable=True)
     keywords = Column(JSON, nullable=True)
+    additional_info = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
@@ -30,6 +31,7 @@ class Conversation(Base):
     
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     agent_id = Column(String, ForeignKey("agent_configs.id"))
+    user_id = Column(String, nullable=True)  # Add user_id field
     title = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -39,7 +41,7 @@ class Conversation(Base):
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
     
     def __repr__(self):
-        return f"<Conversation(id='{self.id}', agent_id='{self.agent_id}')>"
+        return f"<Conversation(id='{self.id}', agent_id='{self.agent_id}', user_id='{self.user_id}')>"
 
 
 class Message(Base):
@@ -47,7 +49,7 @@ class Message(Base):
     
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     conversation_id = Column(String, ForeignKey("conversations.id"))
-    role = Column(String, nullable=False)  # 'user' or 'assistant'
+    role = Column(String, nullable=False)  # 'user', 'assistant', or 'system'
     content = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     

@@ -11,7 +11,7 @@ from app.services.agent_manager import AgentManager
 from app.schemas import (
     CreateAgentRequest, AgentResponse, ChatRequest, ChatResponse,
     ConversationCreate, ConversationSchema, ConversationWithMessages,
-    MessageCreate, MessageSchema
+    MessageCreate, MessageSchema, UpdateAgentAdditionalInfoRequest
 )
 from app.config import settings, DatabaseType
 
@@ -29,6 +29,7 @@ if is_vercel:
         logger.info("Mocking Vercel environment")
 else:
     logger.info("Running in development environment")
+
 
 # Create tables only if using SQLite and not running on Vercel
 if settings.DATABASE_TYPE == DatabaseType.SQLITE and not is_vercel:
@@ -181,6 +182,11 @@ async def chat(
     Handle a chat query by selecting the appropriate agent and processing the message.
     If agent_id is provided, that specific agent will be used.
     If not, the system will select the most appropriate agent based on the query.
+    
+    You can optionally provide:
+    - user_id and user_info: To include user-specific information in the system prompt
+    - constraints: To define constraints like language, units of measurement, etc.
+    - include_history: To include previous messages in the conversation
     """
     # Check if we're on Vercel without S3
     if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
@@ -201,7 +207,11 @@ async def chat(
         result = await AgentManager.process_chat(
             request.query,
             request.agent_id,
-            thread_id
+            thread_id,
+            request.user_id,
+            request.user_info,
+            request.constraints,
+            request.include_history
         )
         
         return result
@@ -244,10 +254,11 @@ async def create_conversation(
 @app.get("/conversations", response_model=List[ConversationSchema], tags=["Conversations"])
 async def get_conversations(
     agent_id: Optional[str] = None,
+    user_id: Optional[str] = None,
     skip: int = 0,
     limit: int = 10
 ):
-    """Get all conversations, optionally filtered by agent_id"""
+    """Get all conversations, optionally filtered by agent_id or user_id"""
     # Check if we're on Vercel without S3
     if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
         return []  # Return empty list on Vercel without S3
@@ -256,7 +267,7 @@ async def get_conversations(
     db_service = get_db_service()
     
     # Get conversations
-    conversations = db_service.list_conversations(agent_id, skip, limit)
+    conversations = db_service.list_conversations(agent_id, user_id, skip, limit)
     return conversations
 
 # Route to get a specific conversation with its messages
@@ -283,9 +294,17 @@ async def get_conversation(
 @app.post("/conversations/{conversation_id}/messages", response_model=MessageSchema, tags=["Messages"])
 async def add_message(
     conversation_id: str,
-    message: MessageCreate
+    message: MessageCreate,
+    constraints: Optional[Dict[str, Any]] = None,
+    include_history: bool = False
 ):
-    """Add a new message to a conversation"""
+    """
+    Add a new message to a conversation and optionally get a response from the agent.
+    
+    You can provide:
+    - constraints: To define constraints like language, units of measurement, etc.
+    - include_history: To include previous messages in the conversation
+    """
     # Check if we're on Vercel without S3
     if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
         raise HTTPException(status_code=400, detail="Cannot add messages in Vercel environment without S3")
@@ -318,10 +337,19 @@ async def add_message(
             if "agent_id" in conversation and conversation["agent_id"]:
                 agent_id = str(conversation["agent_id"])
             
+            # Get user_id if available
+            user_id = None
+            if "user_id" in conversation and conversation["user_id"]:
+                user_id = str(conversation["user_id"])
+            
             result = await AgentManager.process_chat(
                 message.content,
                 agent_id,
-                conversation_id
+                conversation_id,
+                user_id,
+                None,  # No user_info for existing conversations
+                constraints,
+                include_history
             )
         except Exception as e:
             logger.error(f"Error processing message: {str(e)}")
@@ -349,4 +377,43 @@ async def get_messages(
     # Get messages
     messages = db_service.get_conversation_messages(conversation_id)
     return messages
+
+# Route to update agent additional info
+@app.patch("/agents/{agent_id}/additional-info", response_model=AgentResponse, tags=["Agents"])
+async def update_agent_additional_info(
+    agent_id: str,
+    request: UpdateAgentAdditionalInfoRequest
+):
+    """Update the additional information for an agent."""
+    # Check if we're on Vercel without S3
+    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+        raise HTTPException(status_code=400, detail="Cannot update agents in Vercel environment without S3")
+    
+    try:
+        # Update the additional info
+        additional_info = AgentManager.update_agent_additional_info(agent_id, request.additional_info)
+        
+        # Get the updated agent
+        agent_info = AgentManager.get_agent(agent_id)
+        metadata = agent_info["metadata"]
+        
+        # Get the agent from the database
+        db_service = get_db_service()
+        db_agent = db_service.get_agent(agent_id)
+        
+        if not db_agent:
+            raise ValueError(f"No agent found with ID '{agent_id}'.")
+            
+        return {
+            "agent_id": agent_id,
+            "name": metadata["name"],
+            "prompt": metadata["prompt"],
+            "model_name": db_agent["model_name"],
+            "tools": db_agent.get("tools", []),
+            "categories": metadata.get("categories", []),
+            "keywords": metadata.get("keywords", []),
+            "additional_info": agent_info["additional_info"]
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 

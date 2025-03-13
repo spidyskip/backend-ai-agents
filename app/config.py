@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     
     # Logging settings
     LOG_LEVEL: str = "INFO"
+    FUNCTION_TIMEOUT: int = os.getenv("FUNCTION_TIMEOUT", 60) 
+    DATABASE_CONNECTION_TIMEOUT: int = os.getenv("DATABASE_CONNECTION_TIMEOUT", 30)
     
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
     

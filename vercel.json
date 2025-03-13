@@ -17,7 +17,13 @@
     "APP_VERSION": "1.0.0",
     "APP_DESCRIPTION": "A robust backend system for creating and managing AI agents using LangGraph and FastAPI",
     "LOG_LEVEL": "INFO",
-    "VERCEL": "true"
+    "VERCEL": "true",
+    "FUNCTION_TIMEOUT": "60"
+  },
+  "functions": {
+    "run.py": {
+      "memory": 1024,
+      "maxDuration": 60
+    }
   }
 }
-

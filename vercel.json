@@ -2,14 +2,20 @@
   "version": 2,
   "builds": [
     {
-      "src": "app/main.py",
-      "use": "@vercel/python"
+      "src": "run.py",
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "50mb"  // Optional: Adjust for larger deployments
+      }
     }
   ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "app/main.py"
+      "dest": "run.py"
     }
-  ]
+  ],
+  "env": {
+    "PYTHONPATH": "./app"  // Ensures proper imports from the `app` folder
+  }
 }

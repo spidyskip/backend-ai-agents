@@ -243,6 +243,9 @@ async def chat(
         return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logging.info(f"Error processing chat: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error processing chat")
 
 # Route to create a new conversation
 @app.post("/conversations", response_model=ConversationSchema, tags=["Conversations"])

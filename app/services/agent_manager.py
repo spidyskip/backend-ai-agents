@@ -642,7 +642,7 @@ class AgentManager:
         user_info: Optional[Dict[str, Any]] = None,
         additional_prompts: Optional[Dict[str, Any]] = None,
         include_history: bool = False,
-        include_documents: bool = True
+        include_documents: bool = False
     ):
         """
         Process a chat query using the appropriate agent.

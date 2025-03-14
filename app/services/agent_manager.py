@@ -1,21 +1,29 @@
 import logging
 from typing import Dict, List, Optional, Any, Union, cast, Iterable
-from sqlalchemy.orm import Session
 import uuid
 import re
 from collections import Counter
 from pydantic import SecretStr
+from datetime import datetime
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.tools import BaseTool
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from app.models import AgentConfig
+from app.config import settings, DatabaseType
 from app.tools import AVAILABLE_TOOLS
-from app.config import settings
+from app.database import get_db_service
+from app.services.database.interface import DatabaseInterface
+from app.services.documents.documents_manager import get_document_service
+
+# Import S3 service if enabled
+if settings.USE_S3_STORAGE:
+    from app.services.storage.s3_service import S3Service
+    s3_service = S3Service()
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +33,8 @@ class AgentManager:
     checkpointers = {}
     # Store agent metadata for selection
     agent_metadata = {}
+    # Store additional information for agents
+    agent_additional_query = {}
     
     @staticmethod
     def create_agent(
@@ -33,62 +43,42 @@ class AgentManager:
         prompt: str, 
         model_name: str,
         tool_names: List[str],
-        db: Session,
         categories: List[str] = [],
-        keywords: List[str] = []
+        keywords: List[str] = [],
+        additional_query: Dict[str, Any] = {},
+        document_refs: Dict[str, List[str]] = {}
     ):
         # Check if agent already exists in memory
         if agent_id in AgentManager.agents:
             raise ValueError(f"Agent with ID '{agent_id}' already exists in memory.")
         
+        # Get database service
+        db_service = get_db_service()
+        
         # Check if agent already exists in database
-        existing_agent = db.query(AgentConfig).filter(AgentConfig.id == agent_id).first()
+        existing_agent = db_service.get_agent(agent_id)
+        
         if existing_agent:
             # If agent exists in database but not in memory, load it into memory
             logger.info(f"Agent with ID '{agent_id}' already exists in database. Loading into memory.")
             
-            # Extract values from SQLAlchemy columns and convert to appropriate types
-            agent_id_str = str(existing_agent.id)
-            name_str = str(existing_agent.name)
-            prompt_str = str(existing_agent.prompt)
-            model_name_str = str(existing_agent.model_name)
+            # Extract values from database
+            agent_id_str = existing_agent["id"]
+            name_str = existing_agent["name"]
+            prompt_str = existing_agent["prompt"]
+            model_name_str = existing_agent["model_name"]
+            tools_list = existing_agent.get("tools", [])
+            categories_list = existing_agent.get("categories", [])
+            keywords_list = existing_agent.get("keywords", [])
+            additional_query_dict = existing_agent.get("additional_query", {})
+            document_refs_dict = existing_agent.get("document_refs", {})
             
-            # Handle JSON columns that might be None
-            tools_list = []
-            if existing_agent.tools is not None:
-                # Convert SQLAlchemy Column to list
-                if hasattr(existing_agent.tools, '__iter__'):
-                    tools_list = list(existing_agent.tools)
-                else:
-                    # If it's not iterable, convert to string and parse
-                    tools_str = str(existing_agent.tools)
-                    if tools_str.startswith('[') and tools_str.endswith(']'):
-                        # Parse JSON-like string
-                        tools_list = [item.strip(' "\'') for item in tools_str[1:-1].split(',') if item.strip()]
-            
-            categories_list = []
-            if existing_agent.categories is not None:
-                # Convert SQLAlchemy Column to list
-                if hasattr(existing_agent.categories, '__iter__'):
-                    categories_list = list(existing_agent.categories)
-                else:
-                    # If it's not iterable, convert to string and parse
-                    categories_str = str(existing_agent.categories)
-                    if categories_str.startswith('[') and categories_str.endswith(']'):
-                        # Parse JSON-like string
-                        categories_list = [item.strip(' "\'') for item in categories_str[1:-1].split(',') if item.strip()]
-            
-            keywords_list = []
-            if existing_agent.keywords is not None:
-                # Convert SQLAlchemy Column to list
-                if hasattr(existing_agent.keywords, '__iter__'):
-                    keywords_list = list(existing_agent.keywords)
-                else:
-                    # If it's not iterable, convert to string and parse
-                    keywords_str = str(existing_agent.keywords)
-                    if keywords_str.startswith('[') and keywords_str.endswith(']'):
-                        # Parse JSON-like string
-                        keywords_list = [item.strip(' "\'') for item in keywords_str[1:-1].split(',') if item.strip()]
+            # Check if we should use S3 for prompt
+            if settings.USE_S3_STORAGE:
+                # Try to get prompt from S3
+                s3_prompt = s3_service.get_agent_prompt(agent_id_str)
+                if s3_prompt:
+                    prompt_str = s3_prompt
             
             # Select the appropriate model
             if "claude" in model_name_str.lower():
@@ -111,7 +101,10 @@ class AgentManager:
                 )
             
             # Get the requested tools
-            tools = [AVAILABLE_TOOLS[tool_name] for tool_name in tools_list if tool_name in AVAILABLE_TOOLS]
+            tools = []
+            for tool_name in tools_list:
+                if tool_name in AVAILABLE_TOOLS:
+                    tools.append(AVAILABLE_TOOLS[tool_name])
             
             # Initialize memory to persist state between graph runs
             checkpointer = MemorySaver()
@@ -133,8 +126,12 @@ class AgentManager:
                 "name": name_str,
                 "prompt": prompt_str,
                 "categories": categories_list,
-                "keywords": keywords_list
+                "keywords": keywords_list,
+                "document_refs": document_refs_dict
             }
+            
+            # Store additional information
+            AgentManager.agent_additional_query[agent_id_str] = additional_query_dict
             
             return {
                 "agent_id": agent_id_str,
@@ -143,7 +140,9 @@ class AgentManager:
                 "model_name": model_name_str,
                 "tools": tools_list,
                 "categories": categories_list,
-                "keywords": keywords_list
+                "keywords": keywords_list,
+                "additional_query": additional_query_dict,
+                "document_refs": document_refs_dict
             }
         
         # If agent doesn't exist, create a new one
@@ -152,8 +151,6 @@ class AgentManager:
             model = ChatAnthropic(
                 model=model_name,
                 temperature=0,
-                timeout=None,
-                stop=None,  
                 api_key=settings.ANTHROPIC_API_KEY
             )
         elif "gemini" in model_name.lower():
@@ -170,7 +167,10 @@ class AgentManager:
             )
         
         # Get the requested tools
-        tools = [AVAILABLE_TOOLS[tool_name] for tool_name in tool_names if tool_name in AVAILABLE_TOOLS]
+        tools = []
+        for tool_name in tool_names:
+            if tool_name in AVAILABLE_TOOLS:
+                tools.append(AVAILABLE_TOOLS[tool_name])
         
         # Initialize memory to persist state between graph runs
         checkpointer = MemorySaver()
@@ -192,21 +192,39 @@ class AgentManager:
             "name": name,
             "prompt": prompt,
             "categories": categories,
-            "keywords": keywords
+            "keywords": keywords,
+            "document_refs": document_refs
         }
         
+        # Store additional information
+        AgentManager.agent_additional_query[agent_id] = additional_query
+        
+        # Save to S3 if enabled
+        if settings.USE_S3_STORAGE:
+            s3_service.save_agent_prompt(agent_id, prompt)
+            s3_service.save_agent_config({
+                "id": agent_id,
+                "name": name,
+                "model_name": model_name,
+                "tools": tool_names,
+                "categories": categories,
+                "keywords": keywords,
+                "additional_query": additional_query,
+                "document_refs": document_refs
+            })
+        
         # Persist to database
-        db_agent = AgentConfig(
-            id=agent_id, 
-            name=name,
-            prompt=prompt, 
-            model_name=model_name,
-            tools=tool_names,
-            categories=categories,
-            keywords=keywords
-        )
-        db.add(db_agent)
-        db.commit()
+        db_service.create_agent({
+            "id": agent_id,
+            "name": name,
+            "prompt": prompt,
+            "model_name": model_name,
+            "tools": tool_names,
+            "categories": categories,
+            "keywords": keywords,
+            "additional_query": additional_query,
+            "document_refs": document_refs
+        })
         
         return {
             "agent_id": agent_id,
@@ -215,60 +233,158 @@ class AgentManager:
             "model_name": model_name,
             "tools": tool_names,
             "categories": categories,
-            "keywords": keywords
+            "keywords": keywords,
+            "additional_query": additional_query,
+            "document_refs": document_refs
         }
     
     @staticmethod
-    def get_agent(agent_id: str, db: Session):
+    def update_agent(agent_id: str, update_data: Dict[str, Any]):
+        """Update an existing agent with new data."""
+        # Check if agent exists
+        if agent_id not in AgentManager.agents:
+            # Try to load from database or S3
+            try:
+                AgentManager.get_agent(agent_id)
+            except ValueError:
+                raise ValueError(f"No agent found with ID '{agent_id}'.")
+        
+        # Get database service
+        db_service = get_db_service()
+        
+        # Get agent from database
+        db_agent = db_service.get_agent(agent_id)
+        if not db_agent:
+            raise ValueError(f"No agent found with ID '{agent_id}' in database.")
+        
+        # Update agent in database
+        updated_agent = {**db_agent}
+        
+        # Update fields if provided
+        if "name" in update_data:
+            updated_agent["name"] = update_data["name"]
+        if "prompt" in update_data:
+            updated_agent["prompt"] = update_data["prompt"]
+        if "model_name" in update_data:
+            updated_agent["model_name"] = update_data["model_name"]
+        if "tools" in update_data:
+            updated_agent["tools"] = update_data["tools"]
+        if "categories" in update_data:
+            updated_agent["categories"] = update_data["categories"]
+        if "keywords" in update_data:
+            updated_agent["keywords"] = update_data["keywords"]
+        if "additional_query" in update_data:
+            updated_agent["additional_query"] = update_data["additional_query"]
+        if "document_refs" in update_data:
+            updated_agent["document_refs"] = update_data["document_refs"]
+        
+        # Update in database
+        db_service.update_agent(agent_id, updated_agent)
+        
+        # Update in S3 if enabled
+        if settings.USE_S3_STORAGE:
+            if "prompt" in update_data:
+                s3_service.save_agent_prompt(agent_id, update_data["prompt"])
+            
+            s3_config = s3_service.get_agent_config(agent_id)
+            if s3_config:
+                for key, value in update_data.items():
+                    if key != "prompt":  # Prompt is stored separately
+                        s3_config[key] = value
+                s3_service.save_agent_config(agent_id, s3_config)
+        
+        # Recreate the agent in memory
+        # Remove the old agent
+        if agent_id in AgentManager.agents:
+            del AgentManager.agents[agent_id]
+        if agent_id in AgentManager.checkpointers:
+            del AgentManager.checkpointers[agent_id]
+        if agent_id in AgentManager.agent_metadata:
+            del AgentManager.agent_metadata[agent_id]
+        if agent_id in AgentManager.agent_additional_query:
+            del AgentManager.agent_additional_query[agent_id]
+        
+        # Create the updated agent
+        AgentManager.create_agent(
+            agent_id,
+            updated_agent["name"],
+            updated_agent["prompt"],
+            updated_agent["model_name"],
+            updated_agent["tools"],
+            updated_agent.get("categories", []),
+            updated_agent.get("keywords", []),
+            updated_agent.get("additional_query", {}),
+            updated_agent.get("document_refs", {})
+        )
+        
+        return {
+            "agent_id": agent_id,
+            "name": updated_agent["name"],
+            "prompt": updated_agent["prompt"],
+            "model_name": updated_agent["model_name"],
+            "tools": updated_agent["tools"],
+            "categories": updated_agent.get("categories", []),
+            "keywords": updated_agent.get("keywords", []),
+            "additional_query": updated_agent.get("additional_query", {}),
+            "document_refs": updated_agent.get("document_refs", {})
+        }
+    
+    @staticmethod
+    def get_agent(agent_id: str):
         # Check if agent is already loaded
         if agent_id not in AgentManager.agents:
-            # Try to load from database
-            db_agent = db.query(AgentConfig).filter(AgentConfig.id == agent_id).first()
+            # Get database service
+            db_service = get_db_service()
+            
+            # Try to load from database or S3
+            db_agent = db_service.get_agent(agent_id)
+            
             if not db_agent:
+                # If not in database, check S3 if enabled
+                if settings.USE_S3_STORAGE:
+                    s3_config = s3_service.get_agent_config(agent_id)
+                    if s3_config:
+                        # Get prompt from S3
+                        prompt = s3_service.get_agent_prompt(agent_id) or ""
+                        
+                        # Create agent from S3 data
+                        AgentManager.create_agent(
+                            agent_id,
+                            s3_config.get("name", ""),
+                            prompt,
+                            s3_config.get("model_name", ""),
+                            s3_config.get("tools", []),
+                            s3_config.get("categories", []),
+                            s3_config.get("keywords", []),
+                            s3_config.get("additional_query", {}),
+                            s3_config.get("document_refs", {})
+                        )
+                        return {
+                            "agent": AgentManager.agents[agent_id],
+                            "checkpointer": AgentManager.checkpointers[agent_id],
+                            "metadata": AgentManager.agent_metadata[agent_id],
+                            "additional_query": AgentManager.agent_additional_query.get(agent_id, {})
+                        }
+                
                 raise ValueError(f"No agent found with ID '{agent_id}'.")
             
-            # Extract values from SQLAlchemy columns and convert to appropriate types
-            agent_id_str = str(db_agent.id)
-            name_str = str(db_agent.name)
-            prompt_str = str(db_agent.prompt)
-            model_name_str = str(db_agent.model_name)
+            # Extract values from database
+            agent_id_str = db_agent["id"]
+            name_str = db_agent["name"]
+            prompt_str = db_agent["prompt"]
+            model_name_str = db_agent["model_name"]
+            tools_list = db_agent.get("tools", [])
+            categories_list = db_agent.get("categories", [])
+            keywords_list = db_agent.get("keywords", [])
+            additional_query_dict = db_agent.get("additional_query", {})
+            document_refs_dict = db_agent.get("document_refs", {})
             
-            # Handle JSON columns that might be None
-            tools_list = []
-            if db_agent.tools is not None:
-                # Convert SQLAlchemy Column to list
-                if hasattr(db_agent.tools, '__iter__'):
-                    tools_list = list(db_agent.tools)
-                else:
-                    # If it's not iterable, convert to string and parse
-                    tools_str = str(db_agent.tools)
-                    if tools_str.startswith('[') and tools_str.endswith(']'):
-                        # Parse JSON-like string
-                        tools_list = [item.strip(' "\'') for item in tools_str[1:-1].split(',') if item.strip()]
-            
-            categories_list = []
-            if db_agent.categories is not None:
-                # Convert SQLAlchemy Column to list
-                if hasattr(db_agent.categories, '__iter__'):
-                    categories_list = list(db_agent.categories)
-                else:
-                    # If it's not iterable, convert to string and parse
-                    categories_str = str(db_agent.categories)
-                    if categories_str.startswith('[') and categories_str.endswith(']'):
-                        # Parse JSON-like string
-                        categories_list = [item.strip(' "\'') for item in categories_str[1:-1].split(',') if item.strip()]
-            
-            keywords_list = []
-            if db_agent.keywords is not None:
-                # Convert SQLAlchemy Column to list
-                if hasattr(db_agent.keywords, '__iter__'):
-                    keywords_list = list(db_agent.keywords)
-                else:
-                    # If it's not iterable, convert to string and parse
-                    keywords_str = str(db_agent.keywords)
-                    if keywords_str.startswith('[') and keywords_str.endswith(']'):
-                        # Parse JSON-like string
-                        keywords_list = [item.strip(' "\'') for item in keywords_str[1:-1].split(',') if item.strip()]
+            # Check if we should use S3 for prompt
+            if settings.USE_S3_STORAGE:
+                # Try to get prompt from S3
+                s3_prompt = s3_service.get_agent_prompt(agent_id_str)
+                if s3_prompt:
+                    prompt_str = s3_prompt
             
             # Recreate the agent
             AgentManager.create_agent(
@@ -277,103 +393,182 @@ class AgentManager:
                 prompt_str,
                 model_name_str,
                 tools_list,
-                db,
                 categories_list,
-                keywords_list
+                keywords_list,
+                additional_query_dict,
+                document_refs_dict
             )
         
         return {
             "agent": AgentManager.agents[agent_id],
             "checkpointer": AgentManager.checkpointers[agent_id],
-            "metadata": AgentManager.agent_metadata[agent_id]
+            "metadata": AgentManager.agent_metadata[agent_id],
+            "additional_query": AgentManager.agent_additional_query.get(agent_id, {})
         }
     
     @staticmethod
-    def list_agents(db: Session):
+    def update_agent_additional_query(agent_id: str, additional_query: Dict[str, Any]):
+        """Update the additional information for an agent."""
+        # Check if agent exists
+        if agent_id not in AgentManager.agents:
+            # Try to load from database or S3
+            AgentManager.get_agent(agent_id)
+        
+        # Update additional info
+        AgentManager.agent_additional_query[agent_id] = additional_query
+        
+        # Get database service
+        db_service = get_db_service()
+        
+        # Get agent from database
+        db_agent = db_service.get_agent(agent_id)
+        if db_agent:
+            # Update agent in database
+            db_agent["additional_query"] = additional_query
+            db_service.update_agent(agent_id, db_agent)
+        
+        # Update in S3 if enabled
+        if settings.USE_S3_STORAGE:
+            s3_config = s3_service.get_agent_config(agent_id)
+            if s3_config:
+                s3_config["additional_query"] = additional_query
+                s3_service.save_agent_config(agent_id, s3_config)
+        
+        return additional_query
+    
+    @staticmethod
+    def update_agent_document_refs(agent_id: str, document_refs: Dict[str, List[str]]):
+        """Update the document references for an agent."""
+        # Check if agent exists
+        if agent_id not in AgentManager.agents:
+            # Try to load from database or S3
+            AgentManager.get_agent(agent_id)
+        
+        # Update document refs in metadata
+        if agent_id in AgentManager.agent_metadata:
+            AgentManager.agent_metadata[agent_id]["document_refs"] = document_refs
+        
+        # Get database service
+        db_service = get_db_service()
+        
+        # Get agent from database
+        db_agent = db_service.get_agent(agent_id)
+        if db_agent:
+            # Update agent in database
+            db_agent["document_refs"] = document_refs
+            db_service.update_agent(agent_id, db_agent)
+        
+        # Update in S3 if enabled
+        if settings.USE_S3_STORAGE:
+            s3_config = s3_service.get_agent_config(agent_id)
+            if s3_config:
+                s3_config["document_refs"] = document_refs
+                s3_service.save_agent_config(agent_id, s3_config)
+        
+        return document_refs
+    
+    @staticmethod
+    def list_agents():
+        # Get database service
+        db_service = get_db_service()
+        
         # Get all agents from database
-        db_agents = db.query(AgentConfig).all()
+        db_agents = db_service.list_agents()
+        
+        # If S3 storage is enabled, merge with agents from S3
+        if settings.USE_S3_STORAGE:
+            s3_agent_ids = s3_service.list_agents()
+            db_agent_ids = [agent["id"] for agent in db_agents]
+            
+            # Add agents from S3 that are not in the database
+            for agent_id in s3_agent_ids:
+                if agent_id not in db_agent_ids:
+                    s3_config = s3_service.get_agent_config(agent_id)
+                    if s3_config:
+                        prompt = s3_service.get_agent_prompt(agent_id) or ""
+                        db_agents.append({
+                            "id": agent_id,
+                            "name": s3_config.get("name", ""),
+                            "prompt": prompt,
+                            "model_name": s3_config.get("model_name", ""),
+                            "tools": s3_config.get("tools", []),
+                            "categories": s3_config.get("categories", []),
+                            "keywords": s3_config.get("keywords", []),
+                            "additional_query": s3_config.get("additional_query", {}),
+                            "document_refs": s3_config.get("document_refs", {})
+                        })
+        
         return [
             {
-                "agent_id": agent.id,
-                "name": agent.name,
-                "prompt": agent.prompt,
-                "model_name": agent.model_name,
-                "tools": list(agent.tools) if agent.tools is not None and hasattr(agent.tools, '__iter__') else [],
-                "categories": list(agent.categories) if agent.categories is not None and hasattr(agent.categories, '__iter__') else [],
-                "keywords": list(agent.keywords) if agent.keywords is not None and hasattr(agent.keywords, '__iter__') else []
+                "agent_id": agent["id"],
+                "name": agent["name"],
+                "prompt": agent["prompt"],
+                "model_name": agent["model_name"],
+                "tools": agent.get("tools", []),
+                "categories": agent.get("categories", []),
+                "keywords": agent.get("keywords", []),
+                "additional_query": agent.get("additional_query", {}),
+                "document_refs": agent.get("document_refs", {})
             }
             for agent in db_agents
         ]
     
     @staticmethod
-    def load_agents_from_db(db: Session):
-        db_agents = db.query(AgentConfig).all()
+    def load_agents_from_db():
+        # Get database service
+        db_service = get_db_service()
+        
+        # Get all agents from database
+        db_agents = db_service.list_agents()
         loaded_count = 0
         
         for db_agent in db_agents:
-            if str(db_agent.id) not in AgentManager.agents:
+            if db_agent["id"] not in AgentManager.agents:
                 try:
-                    # Extract values from SQLAlchemy columns and convert to appropriate types
-                    agent_id_str = str(db_agent.id)
-                    name_str = str(db_agent.name)
-                    prompt_str = str(db_agent.prompt)
-                    model_name_str = str(db_agent.model_name)
-                    
-                    # Handle JSON columns that might be None
-                    tools_list = []
-                    if db_agent.tools is not None:
-                        # Convert SQLAlchemy Column to list
-                        if hasattr(db_agent.tools, '__iter__'):
-                            tools_list = list(db_agent.tools)
-                        else:
-                            # If it's not iterable, convert to string and parse
-                            tools_str = str(db_agent.tools)
-                            if tools_str.startswith('[') and tools_str.endswith(']'):
-                                # Parse JSON-like string
-                                tools_list = [item.strip(' "\'') for item in tools_str[1:-1].split(',') if item.strip()]
-                    
-                    categories_list = []
-                    if db_agent.categories is not None:
-                        # Convert SQLAlchemy Column to list
-                        if hasattr(db_agent.categories, '__iter__'):
-                            categories_list = list(db_agent.categories)
-                        else:
-                            # If it's not iterable, convert to string and parse
-                            categories_str = str(db_agent.categories)
-                            if categories_str.startswith('[') and categories_str.endswith(']'):
-                                # Parse JSON-like string
-                                categories_list = [item.strip(' "\'') for item in categories_str[1:-1].split(',') if item.strip()]
-                    
-                    keywords_list = []
-                    if db_agent.keywords is not None:
-                        # Convert SQLAlchemy Column to list
-                        if hasattr(db_agent.keywords, '__iter__'):
-                            keywords_list = list(db_agent.keywords)
-                        else:
-                            # If it's not iterable, convert to string and parse
-                            keywords_str = str(db_agent.keywords)
-                            if keywords_str.startswith('[') and keywords_str.endswith(']'):
-                                # Parse JSON-like string
-                                keywords_list = [item.strip(' "\'') for item in keywords_str[1:-1].split(',') if item.strip()]
-                    
                     AgentManager.create_agent(
-                        agent_id_str,
-                        name_str,
-                        prompt_str,
-                        model_name_str,
-                        tools_list,
-                        db,
-                        categories_list,
-                        keywords_list
+                        db_agent["id"],
+                        db_agent["name"],
+                        db_agent["prompt"],
+                        db_agent["model_name"],
+                        db_agent.get("tools", []),
+                        db_agent.get("categories", []),
+                        db_agent.get("keywords", []),
+                        db_agent.get("additional_query", {}),
+                        db_agent.get("document_refs", {})
                     )
                     loaded_count += 1
                 except Exception as e:
-                    logger.error(f"Error loading agent {db_agent.id}: {str(e)}")
+                    logger.error(f"Error loading agent {db_agent['id']}: {str(e)}")
         
-        logger.info(f"Loaded {loaded_count} agents from database")
+        # If S3 storage is enabled, load agents from S3 as well
+        if settings.USE_S3_STORAGE:
+            s3_agent_ids = s3_service.list_agents()
+            
+            for agent_id in s3_agent_ids:
+                if agent_id not in AgentManager.agents:
+                    try:
+                        s3_config = s3_service.get_agent_config(agent_id)
+                        if s3_config:
+                            prompt = s3_service.get_agent_prompt(agent_id) or ""
+                            AgentManager.create_agent(
+                                agent_id,
+                                s3_config.get("name", ""),
+                                prompt,
+                                s3_config.get("model_name", ""),
+                                s3_config.get("tools", []),
+                                s3_config.get("categories", []),
+                                s3_config.get("keywords", []),
+                                s3_config.get("additional_query", {}),
+                                s3_config.get("document_refs", {})
+                            )
+                            loaded_count += 1
+                    except Exception as e:
+                        logger.error(f"Error loading agent {agent_id} from S3: {str(e)}")
+        
+        logger.info(f"Loaded {loaded_count} agents from storage")
     
     @staticmethod
-    def select_agent_for_query(query: str, db: Session):
+    def select_agent_for_query(query: str):
         """
         Select the most appropriate agent for a given query.
         This uses a simple keyword matching algorithm, but could be replaced
@@ -381,7 +576,7 @@ class AgentManager:
         """
         if not AgentManager.agent_metadata:
             # Load agents if not already loaded
-            AgentManager.load_agents_from_db(db)
+            AgentManager.load_agents_from_db()
             
         if not AgentManager.agent_metadata:
             raise ValueError("No agents available to handle the query.")
@@ -421,7 +616,7 @@ class AgentManager:
             agent_id = next(iter(AgentManager.agent_metadata))
             confidence = 0.5  # Low confidence
         else:
-            # Find the key with the maximum value using a different approach
+            # Find the key with the maximum value
             max_score = -1
             max_agent_id = None
             for agent_id, score in scores.items():
@@ -443,41 +638,126 @@ class AgentManager:
         query: str,
         agent_id: Optional[str],
         thread_id: str,
-        db: Session
+        user_id: Optional[str] = None,
+        user_info: Optional[Dict[str, Any]] = None,
+        additional_prompts: Optional[Dict[str, Any]] = None,
+        include_history: bool = False,
+        include_documents: bool = False
     ):
         """
         Process a chat query using the appropriate agent.
         If agent_id is provided, that specific agent will be used.
         If not, the system will select the most appropriate agent based on the query.
+        
+        Args:
+            query: The user's query
+            agent_id: Optional ID of the agent to use
+            thread_id: ID of the conversation thread
+            user_id: Optional ID of the user
+            user_info: Optional additional information about the user
+            additional_prompts: Optional additional_prompts for the agent (language, units, etc.)
+            include_history: Whether to include chat history in the context
+            include_documents: Whether to include document content in context
         """
         # If no agent_id provided, select the most appropriate agent
         if not agent_id:
-            selected_agent = AgentManager.select_agent_for_query(query, db)
+            selected_agent = AgentManager.select_agent_for_query(query)
             agent_id = selected_agent["agent_id"]
             agent_name = selected_agent["name"]
             confidence = selected_agent["confidence"]
         else:
             # Check if the agent exists
             if agent_id not in AgentManager.agents:
-                # Try to load from database
-                db_agent = db.query(AgentConfig).filter(AgentConfig.id == agent_id).first()
-                if not db_agent:
-                    raise ValueError(f"No agent found with ID '{agent_id}'.")
-                
-                # Load the agent
-                AgentManager.get_agent(agent_id, db)
+                # Try to load from database or S3
+                AgentManager.get_agent(agent_id)
             
             agent_name = AgentManager.agent_metadata[agent_id]["name"]
             confidence = 1.0  # User explicitly selected this agent
         
         # Get the agent
-        agent_info = AgentManager.get_agent(agent_id, db)
+        agent_info = AgentManager.get_agent(agent_id)
         agent = agent_info["agent"]
+        additional_query = agent_info["additional_query"]
+        metadata = agent_info["metadata"]
         
-        # Create input for the agent
+        # Get current date and time
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        current_time = datetime.now().strftime("%H:%M:%S")
+        
+        # Create context message with current date and additional info
+        context_message = f"Current date: {current_date}\nCurrent time: {current_time}\n"
+        
+        additional_query_info = ""
+        # Add additional info to context if available
+        if additional_query:
+            additional_query_info += "\nAdditional Information:\n"
+            for key, value in additional_query.items():
+                additional_query_info += f"{key}: {value}\n"
+        
+        # Add user information if available
+        if user_id or user_info:
+            context_message += "\nUser Information:\n"
+            if user_id:
+                context_message += f"User ID: {user_id}\n"
+            
+            if user_info:
+                for key, value in user_info.items():
+                    context_message += f"{key}: {value}\n"
+        
+        # Add additional_prompts if available
+        if additional_prompts:
+            context_message += "\nadditional_prompts:\n"
+            for key, value in additional_prompts.items():
+                context_message += f"{key}: {value}\n"
+        
+        # Add document content if available and requested
+        if include_documents and "document_refs" in metadata and metadata["document_refs"]:
+            document_service = get_document_service()
+            context_message += "\nReference Documents:\n"
+            
+            for category, doc_ids in metadata["document_refs"].items():
+                if doc_ids:
+                    if "*" in doc_ids:
+                        documents = document_service.list_documents(category)
+                    else:
+                        documents = document_service.get_documents_by_ids(category, doc_ids)
+                    
+                    if documents:
+                        context_message += f"\n## {category.upper()} DOCUMENTS\n"
+                        
+                        for doc in documents:
+                            context_message += f"\n### {doc.get('title', 'Untitled Document')}\n"
+                            context_message += f"{doc.get('content', '')}\n"
+
+        # Get database service
+        db_service = get_db_service()
+        
+        # Create input for the agent with context
         agent_input = {
-            "messages": [{"role": "user", "content": query}]
+            "messages": [
+                {"role": "system", "content": context_message},
+            ]
         }
+
+        # Include chat history if requested
+        if include_history:
+            # Check if conversation exists
+            conversation = db_service.get_conversation(thread_id)
+            
+            if conversation and "messages" in conversation:
+                # Get previous messages (excluding system messages)
+                previous_messages = [
+                    {"role": msg["role"], "content": msg["content"]}
+                    for msg in conversation["messages"]
+                    if msg["role"] != "system"
+                ]
+                
+                # Add previous messages to the input
+                if previous_messages:
+                    agent_input["messages"].extend(previous_messages)
+        
+        # Add the current query
+        agent_input["messages"].append({"role": "user", "content": query + "\n" + additional_query_info})
         
         # Invoke the agent with the thread_id for state persistence
         final_state = agent.invoke(
@@ -487,6 +767,46 @@ class AgentManager:
         
         # Extract the response
         response = final_state["messages"][-1].content
+        
+        # Save the conversation and messages to the database
+        # Check if conversation exists
+        conversation = db_service.get_conversation(thread_id)
+        if not conversation:
+            conversation_data = {
+                "id": thread_id,
+                "agent_id": agent_id,
+                "title": f"Conversation {thread_id[:8]}"
+            }
+            
+            # Add user_id to conversation if provided
+            if user_id:
+                conversation_data["user_id"] = user_id
+                
+            db_service.create_conversation(conversation_data)
+        
+        # Save context message
+        db_service.create_message({
+            "conversation_id": thread_id,
+            "role": "system",
+            "agent_id": agent_id,
+            "content": context_message
+        })
+        
+        # Save user message
+        db_service.create_message({
+            "conversation_id": thread_id,
+            "role": "user",
+            "user_id": user_id,
+            "content": query
+        })
+        
+        # Save assistant message
+        db_service.create_message({
+            "conversation_id": thread_id,
+            "role": "assistant",
+            "agent_id": agent_id,
+            "content": response
+        })
         
         return {
             "response": response,

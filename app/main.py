@@ -48,7 +48,7 @@ app = FastAPI(
 )
 
 origins = [
-    "https://v0-ai-chat-interface-g694z4kie-spidyskips-projects.vercel.app",  # URL del tuo frontend
+    "https://v0-ai-chat-interface-neon.vercel.app",  # URL del tuo frontend
     "http://localhost:3000",
 ]
 

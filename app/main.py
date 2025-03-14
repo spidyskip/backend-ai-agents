@@ -47,10 +47,15 @@ app = FastAPI(
     version=settings.APP_VERSION
 )
 
+origins = [
+    "https://v0-ai-chat-interface-g694z4kie-spidyskips-projects.vercel.app",  # URL del tuo frontend
+    "http://localhost:3000",
+]
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=origins,  # Allows all origins
     allow_credentials=True,
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers

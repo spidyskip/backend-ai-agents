@@ -687,11 +687,12 @@ class AgentManager:
         # Create context message with current date and additional info
         context_message = f"Current date: {current_date}\nCurrent time: {current_time}\n"
         
+        additional_query_info = ""
         # Add additional info to context if available
         if additional_query:
-            query += "\nAdditional Information:\n"
+            additional_query_info += "\nAdditional Information:\n"
             for key, value in additional_query.items():
-                query += f"{key}: {value}\n"
+                additional_query_info += f"{key}: {value}\n"
         
         # Add user information if available
         if user_id or user_info:
@@ -756,7 +757,7 @@ class AgentManager:
                     agent_input["messages"].extend(previous_messages)
         
         # Add the current query
-        agent_input["messages"].append({"role": "user", "content": query})
+        agent_input["messages"].append({"role": "user", "content": query + "\n" + additional_query_info})
         
         # Invoke the agent with the thread_id for state persistence
         final_state = agent.invoke(
@@ -787,6 +788,7 @@ class AgentManager:
         db_service.create_message({
             "conversation_id": thread_id,
             "role": "system",
+            "agent_id": agent_id,
             "content": context_message
         })
         
@@ -794,6 +796,7 @@ class AgentManager:
         db_service.create_message({
             "conversation_id": thread_id,
             "role": "user",
+            "user_id": user_id,
             "content": query
         })
         
@@ -801,6 +804,7 @@ class AgentManager:
         db_service.create_message({
             "conversation_id": thread_id,
             "role": "assistant",
+            "agent_id": agent_id,
             "content": response
         })
         

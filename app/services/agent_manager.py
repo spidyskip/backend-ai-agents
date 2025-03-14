@@ -775,6 +775,7 @@ class AgentManager:
             conversation_data = {
                 "id": thread_id,
                 "agent_id": agent_id,
+                "user_id": user_id,
                 "title": f"Conversation {thread_id[:8]}"
             }
             

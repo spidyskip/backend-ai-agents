@@ -270,6 +270,7 @@ async def create_conversation(
         conversation_id = db_service.create_conversation({
             "id": str(uuid.uuid4()),
             "agent_id": request.agent_id,
+            "user_id": request.user_id,
             "title": request.title or f"Conversation with {agent['name']}"
         })
         
@@ -314,6 +315,7 @@ async def get_conversation(
     
     # Get conversation
     conversation = db_service.get_conversation(conversation_id)
+    
     if not conversation:
         raise HTTPException(status_code=404, detail=f"Conversation with ID {conversation_id} not found")
     

@@ -94,6 +94,8 @@ class MessageCreate(MessageBase):
 class MessageSchema(MessageBase):
     id: str
     conversation_id: str
+    user_id: Optional[str] = None
+    agent_id: Optional[str] = None
     created_at: datetime
     
     class Config:

@@ -11,7 +11,8 @@ class AgentBase(BaseModel):
     tools: List[str]
     categories: Optional[List[str]] = None
     keywords: Optional[List[str]] = None
-    additional_info: Optional[Dict[str, Any]] = None
+    additional_query: Optional[Dict[str, Any]] = None
+    document_refs: Optional[Dict[str, List[str]]] = None  # Added document references
 
 # Create agent request schema
 class CreateAgentRequest(AgentBase):
@@ -26,11 +27,26 @@ class AgentResponse(AgentBase):
     agent_id: str
     
     class Config:
-        orm_mode = True
+        from_attributes = True
+
+# Update agent request schema
+class UpdateAgentRequest(BaseModel):
+    name: Optional[str] = None
+    prompt: Optional[str] = None
+    model_name: Optional[str] = None
+    tools: Optional[List[str]] = None
+    categories: Optional[List[str]] = None
+    keywords: Optional[List[str]] = None
+    additional_query: Optional[Dict[str, Any]] = None
+    document_refs: Optional[Dict[str, List[str]]] = None
 
 # Update agent additional info request schema
 class UpdateAgentAdditionalInfoRequest(BaseModel):
-    additional_info: Dict[str, Any]
+    additional_query: Dict[str, Any]
+
+# Update agent document refs request schema
+class UpdateAgentDocumentRefsRequest(BaseModel):
+    document_refs: Dict[str, List[str]]
 
 # Chat request schema
 class ChatRequest(BaseModel):
@@ -39,8 +55,9 @@ class ChatRequest(BaseModel):
     thread_id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()))
     user_id: Optional[str] = None
     user_info: Optional[Dict[str, Any]] = None
-    constraints: Optional[Dict[str, Any]] = None  # Add constraints parameter
-    include_history: bool = False  # Add option to include chat history
+    additional_prompts: Optional[Dict[str, Any]] = None
+    include_history: bool = False
+    include_documents: bool = True  # Whether to include document content in context
 
 # Chat response schema
 class ChatResponse(BaseModel):
@@ -66,7 +83,7 @@ class ConversationSchema(BaseModel):
     updated_at: Optional[datetime] = None
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # Message base schema
 class MessageBase(BaseModel):
@@ -84,7 +101,7 @@ class MessageSchema(MessageBase):
     created_at: datetime
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # Agent schema for nested relationships
 class AgentNestedSchema(BaseModel):
@@ -95,10 +112,11 @@ class AgentNestedSchema(BaseModel):
     tools: List[str]
     categories: List[str]
     keywords: List[str]
-    additional_info: Optional[Dict[str, Any]] = None
+    additional_query: Optional[Dict[str, Any]] = None
+    document_refs: Optional[Dict[str, List[str]]] = None
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # Conversation with messages schema
 class ConversationWithMessages(BaseModel):
@@ -111,5 +129,30 @@ class ConversationWithMessages(BaseModel):
     agent: Optional[AgentNestedSchema] = None
     
     class Config:
-        orm_mode = True
+        from_attributes = True
+
+# Document base schema
+class DocumentBase(BaseModel):
+    title: str
+    content: str
+    metadata: Optional[Dict[str, Any]] = None
+
+# Create document request schema
+class CreateDocumentRequest(DocumentBase):
+    id: Optional[str] = None
+    
+    @validator('id', pre=True, always=True)
+    def set_id(cls, v):
+        return v or str(uuid.uuid4())
+
+# Update document request schema
+class UpdateDocumentRequest(DocumentBase):
+    pass
+
+# Document response schema
+class DocumentResponse(DocumentBase):
+    id: str
+    category: str
+    created_at: str
+    updated_at: str
 

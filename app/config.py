@@ -10,6 +10,10 @@ class DatabaseType(str, Enum):
     SQLITE = "sqlite"
     MONGODB = "mongodb"
 
+class DatabaseStorageType(str, Enum):
+    LOCAL = "local"
+    S3 = "s3"
+
 class Settings(BaseSettings):
     APP_NAME: str = "Dynamic Agent Backend"
     APP_VERSION: str = "1.0.0"
@@ -35,19 +39,21 @@ class Settings(BaseSettings):
     AWS_ACCESS_KEY_ID: str = os.getenv("AWS_ACCESS_KEY_ID", "")
     AWS_SECRET_ACCESS_KEY: str = os.getenv("AWS_SECRET_ACCESS_KEY", "")
     
+    # Document settings
+    LOCAL_DOCUMENT_DIR: str = os.getenv("LOCAL_DOCUMENT_DIR", "docs")
+    DOCUMENT_STORAGE_TYPE: DatabaseStorageType = os.getenv("DOCUMENT_STORAGE_TYPE", DatabaseStorageType.LOCAL)
+    
     # API Keys for various services
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
-    SERPER_API_KEY: str = ""
-    GOOGLE_API_KEY: str = ""  # Added for Gemini
+    SERPER_API_KEY: str = os.getenv("SERPER_API_KEY", "")
+    GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
     
     # Default model settings
-    DEFAULT_LLM_MODEL: str = "gpt-4o"
+    DEFAULT_LLM_MODEL: str = "gemini-2.0-flash"
     
     # Logging settings
     LOG_LEVEL: str = "INFO"
-    FUNCTION_TIMEOUT: int = os.getenv("FUNCTION_TIMEOUT", 60) 
-    DATABASE_CONNECTION_TIMEOUT: int = os.getenv("DATABASE_CONNECTION_TIMEOUT", 30)
     
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
     

@@ -21,6 +21,42 @@ class S3Service:
             aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY
         )
     
+    def get_doc(self, doc_id: str, folder: str = "docs") -> Optional[Union[Dict[str, Any], str]]:
+        """
+        Retrieve a document from S3.
+        
+        Args:
+            doc_id: The ID of the document.
+            
+        Returns:
+            The document as a dictionary if JSON, or as a string if Markdown or plain text, or None if not found.
+        """
+        try:
+            # Determine the file extension
+            extensions = ['json', 'md', 'txt']
+            for ext in extensions:
+                key = f"{folder}/{doc_id}.{ext}"
+                try:
+                    response = self.s3_client.get_object(Bucket=self.bucket_name, Key=key)
+                    content = response['Body'].read().decode('utf-8')
+                    
+                    if ext == 'json':
+                        return json.loads(content)
+                    else:
+                        return content
+                except ClientError as e:
+                    if e.response['Error']['Code'] == 'NoSuchKey':
+                        continue
+                    else:
+                        logger.error(f"Error retrieving document {doc_id} from S3: {str(e)}")
+                        return None
+            
+            logger.warning(f"No document found for ID {doc_id} in S3")
+            return None
+        except ClientError as e:
+            logger.error(f"Error retrieving document {doc_id} from S3: {str(e)}")
+            return None
+    
     def get_agent_prompt(self, agent_id: str) -> Optional[str]:
         """
         Retrieve an agent prompt from S3.

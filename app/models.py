@@ -15,7 +15,8 @@ class AgentConfig(Base):
     tools = Column(JSON, nullable=False)
     categories = Column(JSON, nullable=True)
     keywords = Column(JSON, nullable=True)
-    additional_info = Column(JSON, nullable=True)
+    additional_query = Column(JSON, nullable=True)
+    document_refs = Column(JSON, nullable=True)  # Added document references
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     

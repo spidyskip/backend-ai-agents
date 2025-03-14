@@ -41,7 +41,8 @@ class SQLiteService(DatabaseInterface):
             "tools": list(agent.tools) if agent.tools is not None and hasattr(agent.tools, '__iter__') else [],
             "categories": list(agent.categories) if agent.categories is not None and hasattr(agent.categories, '__iter__') else [],
             "keywords": list(agent.keywords) if agent.keywords is not None and hasattr(agent.keywords, '__iter__') else [],
-            "additional_info": agent.additional_info if hasattr(agent, 'additional_info') else {},
+            "additional_query": agent.additional_query if hasattr(agent, 'additional_query') else {},
+            "document_refs": agent.document_refs if hasattr(agent, 'document_refs') else {},
             "created_at": agent.created_at,
             "updated_at": agent.updated_at
         }
@@ -69,7 +70,8 @@ class SQLiteService(DatabaseInterface):
             tools=agent_data.get("tools", []),
             categories=agent_data.get("categories", []),
             keywords=agent_data.get("keywords", []),
-            additional_info=agent_data.get("additional_info", {})
+            additional_query=agent_data.get("additional_query", {}),
+            document_refs=agent_data.get("document_refs", {})
         )
         
         self.db.add(agent)
@@ -105,9 +107,11 @@ class SQLiteService(DatabaseInterface):
             agent.categories = agent_data["categories"]
         if "keywords" in agent_data:
             agent.keywords = agent_data["keywords"]
-        if "additional_info" in agent_data:
-            agent.additional_info = agent_data["additional_info"]
-        
+        if "additional_query" in agent_data:
+            agent.additional_query = agent_data["additional_query"]
+        if "document_refs" in agent_data:
+            agent.document_refs = agent_data["document_refs"]
+    
         self.db.commit()
         return True
     
@@ -146,7 +150,8 @@ class SQLiteService(DatabaseInterface):
                 "tools": list(agent.tools) if agent.tools is not None and hasattr(agent.tools, '__iter__') else [],
                 "categories": list(agent.categories) if agent.categories is not None and hasattr(agent.categories, '__iter__') else [],
                 "keywords": list(agent.keywords) if agent.keywords is not None and hasattr(agent.keywords, '__iter__') else [],
-                "additional_info": agent.additional_info if hasattr(agent, 'additional_info') else {},
+                "additional_query": agent.additional_query if hasattr(agent, 'additional_query') else {},
+                "document_refs": agent.document_refs if hasattr(agent, 'document_refs') else {},
                 "created_at": agent.created_at,
                 "updated_at": agent.updated_at
             }

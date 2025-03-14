@@ -18,6 +18,7 @@ from app.config import settings, DatabaseType
 from app.tools import AVAILABLE_TOOLS
 from app.database import get_db_service
 from app.services.database.interface import DatabaseInterface
+from app.services.documents.documents_manager import get_document_service
 
 # Import S3 service if enabled
 if settings.USE_S3_STORAGE:
@@ -33,7 +34,7 @@ class AgentManager:
     # Store agent metadata for selection
     agent_metadata = {}
     # Store additional information for agents
-    agent_additional_info = {}
+    agent_additional_query = {}
     
     @staticmethod
     def create_agent(
@@ -44,7 +45,8 @@ class AgentManager:
         tool_names: List[str],
         categories: List[str] = [],
         keywords: List[str] = [],
-        additional_info: Dict[str, Any] = {}
+        additional_query: Dict[str, Any] = {},
+        document_refs: Dict[str, List[str]] = {}
     ):
         # Check if agent already exists in memory
         if agent_id in AgentManager.agents:
@@ -68,7 +70,8 @@ class AgentManager:
             tools_list = existing_agent.get("tools", [])
             categories_list = existing_agent.get("categories", [])
             keywords_list = existing_agent.get("keywords", [])
-            additional_info_dict = existing_agent.get("additional_info", {})
+            additional_query_dict = existing_agent.get("additional_query", {})
+            document_refs_dict = existing_agent.get("document_refs", {})
             
             # Check if we should use S3 for prompt
             if settings.USE_S3_STORAGE:
@@ -123,11 +126,12 @@ class AgentManager:
                 "name": name_str,
                 "prompt": prompt_str,
                 "categories": categories_list,
-                "keywords": keywords_list
+                "keywords": keywords_list,
+                "document_refs": document_refs_dict
             }
             
             # Store additional information
-            AgentManager.agent_additional_info[agent_id_str] = additional_info_dict
+            AgentManager.agent_additional_query[agent_id_str] = additional_query_dict
             
             return {
                 "agent_id": agent_id_str,
@@ -137,7 +141,8 @@ class AgentManager:
                 "tools": tools_list,
                 "categories": categories_list,
                 "keywords": keywords_list,
-                "additional_info": additional_info_dict
+                "additional_query": additional_query_dict,
+                "document_refs": document_refs_dict
             }
         
         # If agent doesn't exist, create a new one
@@ -187,11 +192,12 @@ class AgentManager:
             "name": name,
             "prompt": prompt,
             "categories": categories,
-            "keywords": keywords
+            "keywords": keywords,
+            "document_refs": document_refs
         }
         
         # Store additional information
-        AgentManager.agent_additional_info[agent_id] = additional_info
+        AgentManager.agent_additional_query[agent_id] = additional_query
         
         # Save to S3 if enabled
         if settings.USE_S3_STORAGE:
@@ -203,7 +209,8 @@ class AgentManager:
                 "tools": tool_names,
                 "categories": categories,
                 "keywords": keywords,
-                "additional_info": additional_info
+                "additional_query": additional_query,
+                "document_refs": document_refs
             })
         
         # Persist to database
@@ -215,7 +222,8 @@ class AgentManager:
             "tools": tool_names,
             "categories": categories,
             "keywords": keywords,
-            "additional_info": additional_info
+            "additional_query": additional_query,
+            "document_refs": document_refs
         })
         
         return {
@@ -226,7 +234,99 @@ class AgentManager:
             "tools": tool_names,
             "categories": categories,
             "keywords": keywords,
-            "additional_info": additional_info
+            "additional_query": additional_query,
+            "document_refs": document_refs
+        }
+    
+    @staticmethod
+    def update_agent(agent_id: str, update_data: Dict[str, Any]):
+        """Update an existing agent with new data."""
+        # Check if agent exists
+        if agent_id not in AgentManager.agents:
+            # Try to load from database or S3
+            try:
+                AgentManager.get_agent(agent_id)
+            except ValueError:
+                raise ValueError(f"No agent found with ID '{agent_id}'.")
+        
+        # Get database service
+        db_service = get_db_service()
+        
+        # Get agent from database
+        db_agent = db_service.get_agent(agent_id)
+        if not db_agent:
+            raise ValueError(f"No agent found with ID '{agent_id}' in database.")
+        
+        # Update agent in database
+        updated_agent = {**db_agent}
+        
+        # Update fields if provided
+        if "name" in update_data:
+            updated_agent["name"] = update_data["name"]
+        if "prompt" in update_data:
+            updated_agent["prompt"] = update_data["prompt"]
+        if "model_name" in update_data:
+            updated_agent["model_name"] = update_data["model_name"]
+        if "tools" in update_data:
+            updated_agent["tools"] = update_data["tools"]
+        if "categories" in update_data:
+            updated_agent["categories"] = update_data["categories"]
+        if "keywords" in update_data:
+            updated_agent["keywords"] = update_data["keywords"]
+        if "additional_query" in update_data:
+            updated_agent["additional_query"] = update_data["additional_query"]
+        if "document_refs" in update_data:
+            updated_agent["document_refs"] = update_data["document_refs"]
+        
+        # Update in database
+        db_service.update_agent(agent_id, updated_agent)
+        
+        # Update in S3 if enabled
+        if settings.USE_S3_STORAGE:
+            if "prompt" in update_data:
+                s3_service.save_agent_prompt(agent_id, update_data["prompt"])
+            
+            s3_config = s3_service.get_agent_config(agent_id)
+            if s3_config:
+                for key, value in update_data.items():
+                    if key != "prompt":  # Prompt is stored separately
+                        s3_config[key] = value
+                s3_service.save_agent_config(agent_id, s3_config)
+        
+        # Recreate the agent in memory
+        # Remove the old agent
+        if agent_id in AgentManager.agents:
+            del AgentManager.agents[agent_id]
+        if agent_id in AgentManager.checkpointers:
+            del AgentManager.checkpointers[agent_id]
+        if agent_id in AgentManager.agent_metadata:
+            del AgentManager.agent_metadata[agent_id]
+        if agent_id in AgentManager.agent_additional_query:
+            del AgentManager.agent_additional_query[agent_id]
+        
+        # Create the updated agent
+        AgentManager.create_agent(
+            agent_id,
+            updated_agent["name"],
+            updated_agent["prompt"],
+            updated_agent["model_name"],
+            updated_agent["tools"],
+            updated_agent.get("categories", []),
+            updated_agent.get("keywords", []),
+            updated_agent.get("additional_query", {}),
+            updated_agent.get("document_refs", {})
+        )
+        
+        return {
+            "agent_id": agent_id,
+            "name": updated_agent["name"],
+            "prompt": updated_agent["prompt"],
+            "model_name": updated_agent["model_name"],
+            "tools": updated_agent["tools"],
+            "categories": updated_agent.get("categories", []),
+            "keywords": updated_agent.get("keywords", []),
+            "additional_query": updated_agent.get("additional_query", {}),
+            "document_refs": updated_agent.get("document_refs", {})
         }
     
     @staticmethod
@@ -256,13 +356,14 @@ class AgentManager:
                             s3_config.get("tools", []),
                             s3_config.get("categories", []),
                             s3_config.get("keywords", []),
-                            s3_config.get("additional_info", {})
+                            s3_config.get("additional_query", {}),
+                            s3_config.get("document_refs", {})
                         )
                         return {
                             "agent": AgentManager.agents[agent_id],
                             "checkpointer": AgentManager.checkpointers[agent_id],
                             "metadata": AgentManager.agent_metadata[agent_id],
-                            "additional_info": AgentManager.agent_additional_info.get(agent_id, {})
+                            "additional_query": AgentManager.agent_additional_query.get(agent_id, {})
                         }
                 
                 raise ValueError(f"No agent found with ID '{agent_id}'.")
@@ -275,7 +376,8 @@ class AgentManager:
             tools_list = db_agent.get("tools", [])
             categories_list = db_agent.get("categories", [])
             keywords_list = db_agent.get("keywords", [])
-            additional_info_dict = db_agent.get("additional_info", {})
+            additional_query_dict = db_agent.get("additional_query", {})
+            document_refs_dict = db_agent.get("document_refs", {})
             
             # Check if we should use S3 for prompt
             if settings.USE_S3_STORAGE:
@@ -293,18 +395,19 @@ class AgentManager:
                 tools_list,
                 categories_list,
                 keywords_list,
-                additional_info_dict
+                additional_query_dict,
+                document_refs_dict
             )
         
         return {
             "agent": AgentManager.agents[agent_id],
             "checkpointer": AgentManager.checkpointers[agent_id],
             "metadata": AgentManager.agent_metadata[agent_id],
-            "additional_info": AgentManager.agent_additional_info.get(agent_id, {})
+            "additional_query": AgentManager.agent_additional_query.get(agent_id, {})
         }
     
     @staticmethod
-    def update_agent_additional_info(agent_id: str, additional_info: Dict[str, Any]):
+    def update_agent_additional_query(agent_id: str, additional_query: Dict[str, Any]):
         """Update the additional information for an agent."""
         # Check if agent exists
         if agent_id not in AgentManager.agents:
@@ -312,7 +415,7 @@ class AgentManager:
             AgentManager.get_agent(agent_id)
         
         # Update additional info
-        AgentManager.agent_additional_info[agent_id] = additional_info
+        AgentManager.agent_additional_query[agent_id] = additional_query
         
         # Get database service
         db_service = get_db_service()
@@ -321,17 +424,48 @@ class AgentManager:
         db_agent = db_service.get_agent(agent_id)
         if db_agent:
             # Update agent in database
-            db_agent["additional_info"] = additional_info
+            db_agent["additional_query"] = additional_query
             db_service.update_agent(agent_id, db_agent)
         
         # Update in S3 if enabled
         if settings.USE_S3_STORAGE:
             s3_config = s3_service.get_agent_config(agent_id)
             if s3_config:
-                s3_config["additional_info"] = additional_info
+                s3_config["additional_query"] = additional_query
                 s3_service.save_agent_config(agent_id, s3_config)
         
-        return additional_info
+        return additional_query
+    
+    @staticmethod
+    def update_agent_document_refs(agent_id: str, document_refs: Dict[str, List[str]]):
+        """Update the document references for an agent."""
+        # Check if agent exists
+        if agent_id not in AgentManager.agents:
+            # Try to load from database or S3
+            AgentManager.get_agent(agent_id)
+        
+        # Update document refs in metadata
+        if agent_id in AgentManager.agent_metadata:
+            AgentManager.agent_metadata[agent_id]["document_refs"] = document_refs
+        
+        # Get database service
+        db_service = get_db_service()
+        
+        # Get agent from database
+        db_agent = db_service.get_agent(agent_id)
+        if db_agent:
+            # Update agent in database
+            db_agent["document_refs"] = document_refs
+            db_service.update_agent(agent_id, db_agent)
+        
+        # Update in S3 if enabled
+        if settings.USE_S3_STORAGE:
+            s3_config = s3_service.get_agent_config(agent_id)
+            if s3_config:
+                s3_config["document_refs"] = document_refs
+                s3_service.save_agent_config(agent_id, s3_config)
+        
+        return document_refs
     
     @staticmethod
     def list_agents():
@@ -360,7 +494,8 @@ class AgentManager:
                             "tools": s3_config.get("tools", []),
                             "categories": s3_config.get("categories", []),
                             "keywords": s3_config.get("keywords", []),
-                            "additional_info": s3_config.get("additional_info", {})
+                            "additional_query": s3_config.get("additional_query", {}),
+                            "document_refs": s3_config.get("document_refs", {})
                         })
         
         return [
@@ -372,7 +507,8 @@ class AgentManager:
                 "tools": agent.get("tools", []),
                 "categories": agent.get("categories", []),
                 "keywords": agent.get("keywords", []),
-                "additional_info": agent.get("additional_info", {})
+                "additional_query": agent.get("additional_query", {}),
+                "document_refs": agent.get("document_refs", {})
             }
             for agent in db_agents
         ]
@@ -397,7 +533,8 @@ class AgentManager:
                         db_agent.get("tools", []),
                         db_agent.get("categories", []),
                         db_agent.get("keywords", []),
-                        db_agent.get("additional_info", {})
+                        db_agent.get("additional_query", {}),
+                        db_agent.get("document_refs", {})
                     )
                     loaded_count += 1
                 except Exception as e:
@@ -421,7 +558,8 @@ class AgentManager:
                                 s3_config.get("tools", []),
                                 s3_config.get("categories", []),
                                 s3_config.get("keywords", []),
-                                s3_config.get("additional_info", {})
+                                s3_config.get("additional_query", {}),
+                                s3_config.get("document_refs", {})
                             )
                             loaded_count += 1
                     except Exception as e:
@@ -502,8 +640,9 @@ class AgentManager:
         thread_id: str,
         user_id: Optional[str] = None,
         user_info: Optional[Dict[str, Any]] = None,
-        constraints: Optional[Dict[str, Any]] = None,
-        include_history: bool = False
+        additional_prompts: Optional[Dict[str, Any]] = None,
+        include_history: bool = False,
+        include_documents: bool = True
     ):
         """
         Process a chat query using the appropriate agent.
@@ -516,8 +655,9 @@ class AgentManager:
             thread_id: ID of the conversation thread
             user_id: Optional ID of the user
             user_info: Optional additional information about the user
-            constraints: Optional constraints for the agent (language, units, etc.)
+            additional_prompts: Optional additional_prompts for the agent (language, units, etc.)
             include_history: Whether to include chat history in the context
+            include_documents: Whether to include document content in context
         """
         # If no agent_id provided, select the most appropriate agent
         if not agent_id:
@@ -537,8 +677,8 @@ class AgentManager:
         # Get the agent
         agent_info = AgentManager.get_agent(agent_id)
         agent = agent_info["agent"]
-        additional_info = agent_info["additional_info"]
-        prompt = agent_info["metadata"]["prompt"]
+        additional_query = agent_info["additional_query"]
+        metadata = agent_info["metadata"]
         
         # Get current date and time
         current_date = datetime.now().strftime("%Y-%m-%d")
@@ -546,7 +686,13 @@ class AgentManager:
         
         # Create context message with current date and additional info
         context_message = f"Current date: {current_date}\nCurrent time: {current_time}\n"
-    
+        
+        # Add additional info to context if available
+        if additional_query:
+            query += "\nAdditional Information:\n"
+            for key, value in additional_query.items():
+                query += f"{key}: {value}\n"
+        
         # Add user information if available
         if user_id or user_info:
             context_message += "\nUser Information:\n"
@@ -557,28 +703,41 @@ class AgentManager:
                 for key, value in user_info.items():
                     context_message += f"{key}: {value}\n"
         
-        additional_query = ""
-        # Add constraints if available
-        if constraints:
-            for key, value in constraints.items():
-                additional_query += f"{key}: {value}\n"
+        # Add additional_prompts if available
+        if additional_prompts:
+            context_message += "\nadditional_prompts:\n"
+            for key, value in additional_prompts.items():
+                context_message += f"{key}: {value}\n"
         
-        # Add additional info to context if available
-        if additional_info:
-            additional_query += "\nAdditional Information:\n"
-            for key, value in additional_info.items():
-                additional_query += f"{key}: {value}\n"
-    
+        # Add document content if available and requested
+        if include_documents and "document_refs" in metadata and metadata["document_refs"]:
+            document_service = get_document_service()
+            context_message += "\nReference Documents:\n"
+            
+            for category, doc_ids in metadata["document_refs"].items():
+                if doc_ids:
+                    if "*" in doc_ids:
+                        documents = document_service.list_documents(category)
+                    else:
+                        documents = document_service.get_documents_by_ids(category, doc_ids)
+                    
+                    if documents:
+                        context_message += f"\n## {category.upper()} DOCUMENTS\n"
+                        
+                        for doc in documents:
+                            context_message += f"\n### {doc.get('title', 'Untitled Document')}\n"
+                            context_message += f"{doc.get('content', '')}\n"
+
         # Get database service
         db_service = get_db_service()
         
         # Create input for the agent with context
         agent_input = {
             "messages": [
-                {"role": "system", "content": prompt + "\n" + context_message},
+                {"role": "system", "content": context_message},
             ]
         }
-        
+
         # Include chat history if requested
         if include_history:
             # Check if conversation exists
@@ -598,8 +757,6 @@ class AgentManager:
         
         # Add the current query
         agent_input["messages"].append({"role": "user", "content": query})
-        if len(query) > 0:
-            agent_input["messages"].append({"role": "user", "content": additional_query})
         
         # Invoke the agent with the thread_id for state persistence
         final_state = agent.invoke(

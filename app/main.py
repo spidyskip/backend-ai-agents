@@ -8,10 +8,11 @@ import uuid
 
 from app.database import get_db_session, get_db_service, Base, engine
 from app.services.agent_manager import AgentManager
+from app.services.documents.documents_manager import get_document_service
 from app.schemas import (
     CreateAgentRequest, AgentResponse, ChatRequest, ChatResponse,
     ConversationCreate, ConversationSchema, ConversationWithMessages,
-    MessageCreate, MessageSchema, UpdateAgentAdditionalInfoRequest
+    MessageCreate, MessageSchema, UpdateAgentAdditionalInfoRequest, DocumentResponse
 )
 from app.config import settings, DatabaseType
 
@@ -185,7 +186,7 @@ async def chat(
     
     You can optionally provide:
     - user_id and user_info: To include user-specific information in the system prompt
-    - constraints: To define constraints like language, units of measurement, etc.
+    - additional_prompts: To define additional_prompts like language, units of measurement, etc.
     - include_history: To include previous messages in the conversation
     """
     # Check if we're on Vercel without S3
@@ -210,7 +211,7 @@ async def chat(
             thread_id,
             request.user_id,
             request.user_info,
-            request.constraints,
+            request.additional_prompts,
             request.include_history
         )
         
@@ -295,14 +296,14 @@ async def get_conversation(
 async def add_message(
     conversation_id: str,
     message: MessageCreate,
-    constraints: Optional[Dict[str, Any]] = None,
+    additional_prompts: Optional[Dict[str, Any]] = None,
     include_history: bool = False
 ):
     """
     Add a new message to a conversation and optionally get a response from the agent.
     
     You can provide:
-    - constraints: To define constraints like language, units of measurement, etc.
+    - additional_prompts: To define additional_prompts like language, units of measurement, etc.
     - include_history: To include previous messages in the conversation
     """
     # Check if we're on Vercel without S3
@@ -348,7 +349,7 @@ async def add_message(
                 conversation_id,
                 user_id,
                 None,  # No user_info for existing conversations
-                constraints,
+                additional_prompts,
                 include_history
             )
         except Exception as e:
@@ -380,7 +381,7 @@ async def get_messages(
 
 # Route to update agent additional info
 @app.patch("/agents/{agent_id}/additional-info", response_model=AgentResponse, tags=["Agents"])
-async def update_agent_additional_info(
+async def update_agent_additional_query(
     agent_id: str,
     request: UpdateAgentAdditionalInfoRequest
 ):
@@ -391,7 +392,7 @@ async def update_agent_additional_info(
     
     try:
         # Update the additional info
-        additional_info = AgentManager.update_agent_additional_info(agent_id, request.additional_info)
+        additional_query = AgentManager.update_agent_additional_query(agent_id, request.additional_query)
         
         # Get the updated agent
         agent_info = AgentManager.get_agent(agent_id)
@@ -412,8 +413,20 @@ async def update_agent_additional_info(
             "tools": db_agent.get("tools", []),
             "categories": metadata.get("categories", []),
             "keywords": metadata.get("keywords", []),
-            "additional_info": agent_info["additional_info"]
+            "additional_query": agent_info["additional_query"]
         }
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+# Route get list documents
+@app.get("/documents", response_model=List[DocumentResponse], tags=["Documents"])
+async def list_documents():
+    """List all available agents in the database"""
+    # Check if we're on Vercel without S3
+    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+        return []  # Return empty list on Vercel without S3
+    document_service = get_document_service()
+    documents = document_service.list_documents()
+    return documents
 

@@ -12,7 +12,7 @@ from app.services.documents.documents_manager import get_document_service
 from app.schemas import (
     CreateAgentRequest, AgentResponse, ChatRequest, ChatResponse,
     ConversationCreate, ConversationSchema, ConversationWithMessages,
-    MessageCreate, MessageSchema, UpdateAgentAdditionalInfoRequest, DocumentResponse
+    MessageCreate, MessageSchema, UpdateAgentRequest, DocumentResponse
 )
 from app.config import settings, DatabaseType
 
@@ -172,6 +172,26 @@ async def create_agent(request: CreateAgentRequest):
         return agent_info
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    
+
+# Route to update agent additional info
+@app.patch("/agents/{agent_id}", response_model=AgentResponse, tags=["Agents"])
+async def update_agent(
+    agent_id: str,
+    request: UpdateAgentRequest
+):
+    """Update the additional information for an agent."""
+    # Check if we're on Vercel without S3
+    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+        raise HTTPException(status_code=400, detail="Cannot update agents in Vercel environment without S3")
+
+    try:
+        update_data = request.model_dump(exclude_unset=True)
+        updated_agent = AgentManager.update_agent(agent_id, update_data)
+        return updated_agent
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
 
 # Route to handle chat queries and select appropriate agent
 @app.post("/chat", response_model=ChatResponse, tags=["Chat"])
@@ -379,50 +399,11 @@ async def get_messages(
     messages = db_service.get_conversation_messages(conversation_id)
     return messages
 
-# Route to update agent additional info
-@app.patch("/agents/{agent_id}/additional-info", response_model=AgentResponse, tags=["Agents"])
-async def update_agent_additional_query(
-    agent_id: str,
-    request: UpdateAgentAdditionalInfoRequest
-):
-    """Update the additional information for an agent."""
-    # Check if we're on Vercel without S3
-    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
-        raise HTTPException(status_code=400, detail="Cannot update agents in Vercel environment without S3")
-    
-    try:
-        # Update the additional info
-        additional_query = AgentManager.update_agent_additional_query(agent_id, request.additional_query)
-        
-        # Get the updated agent
-        agent_info = AgentManager.get_agent(agent_id)
-        metadata = agent_info["metadata"]
-        
-        # Get the agent from the database
-        db_service = get_db_service()
-        db_agent = db_service.get_agent(agent_id)
-        
-        if not db_agent:
-            raise ValueError(f"No agent found with ID '{agent_id}'.")
-            
-        return {
-            "agent_id": agent_id,
-            "name": metadata["name"],
-            "prompt": metadata["prompt"],
-            "model_name": db_agent["model_name"],
-            "tools": db_agent.get("tools", []),
-            "categories": metadata.get("categories", []),
-            "keywords": metadata.get("keywords", []),
-            "additional_query": agent_info["additional_query"]
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
 
 # Route get list documents
 @app.get("/documents", response_model=List[DocumentResponse], tags=["Documents"])
 async def list_documents():
-    """List all available agents in the database"""
+    """List all available documents in the database"""
     # Check if we're on Vercel without S3
     if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
         return []  # Return empty list on Vercel without S3

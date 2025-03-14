@@ -40,10 +40,6 @@ class UpdateAgentRequest(BaseModel):
     additional_query: Optional[Dict[str, Any]] = None
     document_refs: Optional[Dict[str, List[str]]] = None
 
-# Update agent additional info request schema
-class UpdateAgentAdditionalInfoRequest(BaseModel):
-    additional_query: Dict[str, Any]
-
 # Update agent document refs request schema
 class UpdateAgentDocumentRefsRequest(BaseModel):
     document_refs: Dict[str, List[str]]

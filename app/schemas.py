@@ -154,3 +154,7 @@ class DocumentResponse(DocumentBase):
     created_at: str
     updated_at: str
 
+class DocumentCreate(BaseModel):
+    title: str
+    content: str
+    metadata: Optional[Dict[str, Any]] = None

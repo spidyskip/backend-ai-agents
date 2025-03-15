@@ -12,7 +12,7 @@ from app.services.documents.documents_manager import get_document_service
 from app.schemas import (
     CreateAgentRequest, AgentResponse, ChatRequest, ChatResponse,
     ConversationCreate, ConversationSchema, ConversationWithMessages,
-    MessageCreate, MessageSchema, UpdateAgentRequest, DocumentResponse
+    MessageCreate, MessageSchema, UpdateAgentRequest, DocumentResponse, DocumentCreate
 )
 from app.config import settings, DatabaseType
 
@@ -421,3 +421,22 @@ async def list_documents():
     documents = document_service.list_documents()
     return documents
 
+@app.post("/documents", response_model=DocumentResponse, tags=["Documents"])
+async def add_document(
+    category: str,
+    document: DocumentCreate
+):
+    """Add a new document to the specified category"""
+    # Check if we're on Vercel without S3
+    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+        raise HTTPException(status_code=400, detail="Cannot add documents in Vercel environment without S3")
+    
+    document_service = get_document_service()
+    
+    try:
+        doc_data = document.dict()
+        doc_id = document_service.add_document(category, doc_data)
+        created_document = document_service.get_document(category, doc_id)
+        return created_document
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))

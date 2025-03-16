@@ -9,6 +9,7 @@ load_dotenv()
 class DatabaseType(str, Enum):
     SQLITE = "sqlite"
     MONGODB = "mongodb"
+    S3 = "s3"
 
 class DatabaseStorageType(str, Enum):
     LOCAL = "local"
@@ -38,6 +39,7 @@ class Settings(BaseSettings):
     S3_REGION: str = os.getenv("S3_REGION", "us-east-1")
     AWS_ACCESS_KEY_ID: str = os.getenv("AWS_ACCESS_KEY_ID", "")
     AWS_SECRET_ACCESS_KEY: str = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+    S3_ENDPOINT_URL: str = os.getenv("S3_ENDPOINT_URL", "")
     
     # Document settings
     LOCAL_DOCUMENT_DIR: str = os.getenv("LOCAL_DOCUMENT_DIR", "docs")
@@ -62,7 +64,7 @@ class Settings(BaseSettings):
         """Get the appropriate database URL based on the database type."""
         if self.DATABASE_TYPE == DatabaseType.SQLITE:
             return self.SQLITE_URL
-        return ""  # For MongoDB, we use the URI directly
+        return ""
 
 # Create global settings object
 settings = Settings()

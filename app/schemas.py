@@ -72,7 +72,7 @@ class ConversationCreate(BaseModel):
 # Conversation schema
 class ConversationSchema(BaseModel):
     id: str
-    agent_id: str
+    agent_id: Optional[str] = None
     user_id: Optional[str] = None
     title: Optional[str] = None
     created_at: datetime

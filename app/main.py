@@ -66,7 +66,7 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     # Skip database operations on Vercel
-    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+    if is_vercel and mock_vercel:
         logger.info("Running on Vercel without S3, skipping database operations")
         return
     
@@ -79,23 +79,21 @@ async def startup_event():
 @app.get("/health")
 async def health_check():
     """Check if the API is running"""
-    storage_type = "S3" if settings.USE_S3_STORAGE else settings.DATABASE_TYPE
     return {
         "status": "healthy", 
         "version": settings.APP_VERSION,
         "environment": "Vercel" if is_vercel else "Development",
-        "storage_type": storage_type
+        "storage_type": settings.DATABASE_TYPE
     }
 
 @app.get("/")
 async def root():
-    storage_type = "S3" if settings.USE_S3_STORAGE else settings.DATABASE_TYPE
     return {
         "message": f"Welcome to {settings.APP_NAME}",
         "version": settings.APP_VERSION,
         "documentation": "/docs",
         "environment": "Vercel" if is_vercel else "Development",
-        "storage_type": storage_type,
+        "storage_type": settings.DATABASE_TYPE,
         "endpoints": [
             {"path": "/agents", "method": "GET", "description": "List all available agents"},
             {"path": "/agent", "method": "POST", "description": "Create a new agent"},
@@ -111,7 +109,7 @@ async def root():
 async def list_agents():
     """List all available agents in the database"""
     # Check if we're on Vercel without S3
-    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+    if is_vercel and mock_vercel:
         return []  # Return empty list on Vercel without S3
     
     agents = AgentManager.list_agents()
@@ -122,7 +120,7 @@ async def list_agents():
 async def get_agent(agent_id: str):
     """Get a specific agent by ID"""
     # Check if we're on Vercel without S3
-    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+    if is_vercel and mock_vercel:
         raise HTTPException(status_code=404, detail="Agent not found (Vercel environment)")
     
     try:
@@ -155,7 +153,7 @@ async def get_agent(agent_id: str):
 async def create_agent(request: CreateAgentRequest):
     """Create a new agent with specified configuration"""
     # Check if we're on Vercel without S3
-    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+    if is_vercel and mock_vercel:
         raise HTTPException(status_code=400, detail="Cannot create agents in Vercel environment without S3")
     
     try:
@@ -188,7 +186,7 @@ async def update_agent(
 ):
     """Update the additional information for an agent."""
     # Check if we're on Vercel without S3
-    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+    if is_vercel and mock_vercel:
         raise HTTPException(status_code=400, detail="Cannot update agents in Vercel environment without S3")
 
     try:
@@ -216,7 +214,7 @@ async def chat(
     - include_history: To include previous messages in the conversation
     """
     # Check if we're on Vercel without S3
-    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+    if is_vercel and mock_vercel:
         # Return a mock response for Vercel environment
         return {
             "response": "I'm running on Vercel and can't access the database. Please use the development environment for full functionality.",
@@ -238,7 +236,8 @@ async def chat(
             request.user_id,
             request.user_info,
             request.additional_prompts,
-            request.include_history
+            request.include_history,
+            request.include_documents
         )
         
         return result
@@ -255,7 +254,7 @@ async def create_conversation(
 ):
     """Create a new conversation for a specific agent"""
     # Check if we're on Vercel without S3
-    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+    if is_vercel and mock_vercel:
         raise HTTPException(status_code=400, detail="Cannot create conversations in Vercel environment without S3")
     
     try:
@@ -291,7 +290,7 @@ async def get_conversations(
 ):
     """Get all conversations, optionally filtered by agent_id or user_id"""
     # Check if we're on Vercel without S3
-    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+    if is_vercel and mock_vercel:
         return []  # Return empty list on Vercel without S3
     
     # Get database service
@@ -308,7 +307,7 @@ async def get_conversation(
 ):
     """Get a specific conversation with all its messages"""
     # Check if we're on Vercel without S3
-    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+    if is_vercel and mock_vercel:
         raise HTTPException(status_code=404, detail="Conversation not found (Vercel environment)")
     
     # Get database service
@@ -329,7 +328,7 @@ async def update_conversation(
 ):
     """Update the title of a specific conversation"""
     # Check if we're on Vercel without S3
-    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+    if is_vercel and mock_vercel:
         raise HTTPException(status_code=400, detail="Cannot update conversations in Vercel environment without S3")
     
     # Get database service
@@ -369,7 +368,7 @@ async def add_message(
     - include_history: To include previous messages in the conversation
     """
     # Check if we're on Vercel without S3
-    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+    if is_vercel and mock_vercel:
         raise HTTPException(status_code=400, detail="Cannot add messages in Vercel environment without S3")
     
     # Get database service
@@ -426,7 +425,7 @@ async def get_messages(
 ):
     """Get all messages for a specific conversation"""
     # Check if we're on Vercel without S3
-    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+    if is_vercel and mock_vercel:
         return []  # Return empty list on Vercel without S3
     
     # Get database service
@@ -446,8 +445,8 @@ async def get_messages(
 async def list_documents():
     """List all available documents in the database"""
     # Check if we're on Vercel without S3
-    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
-        return []  # Return empty list on Vercel without S3
+    if is_vercel and mock_vercel:
+        return []
     document_service = get_document_service()
     documents = document_service.list_documents()
     return documents
@@ -459,7 +458,7 @@ async def add_document(
 ):
     """Add a new document to the specified category"""
     # Check if we're on Vercel without S3
-    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+    if is_vercel and mock_vercel:
         raise HTTPException(status_code=400, detail="Cannot add documents in Vercel environment without S3")
     
     document_service = get_document_service()
@@ -477,10 +476,10 @@ async def get_document(
     category: str,
     doc_id: str
 ):
-    """List all available documents in the database"""
+    """Get a specific document by ID"""
     # Check if we're on Vercel without S3
-    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
-        return []  # Return empty list on Vercel without S3
+    if is_vercel and mock_vercel:
+        return []
     document_service = get_document_service()
     try:
         document = document_service.get_document(category, [doc_id])
@@ -494,7 +493,7 @@ async def get_document(
 async def list_categories():
     """List all available document categories"""
     # Check if we're on Vercel without S3
-    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+    if is_vercel and mock_vercel:
         return []  # Return empty list on Vercel without S3
     
     document_service = get_document_service()

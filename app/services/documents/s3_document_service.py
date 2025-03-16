@@ -8,6 +8,7 @@ from datetime import datetime
 
 from app.config import settings
 from app.services.documents.interface import DocumentInterface
+from app.services.storage.s3_service import S3Service
 
 logger = logging.getLogger(__name__)
 
@@ -16,13 +17,7 @@ class S3DocumentService(DocumentInterface):
     
     def __init__(self):
         """Initialize the S3 document service with credentials from settings."""
-        self.bucket_name = settings.S3_BUCKET_NAME
-        self.s3_client = boto3.client(
-            's3',
-            region_name=settings.S3_REGION,
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY
-        )
+        self.s3_service = S3Service()    
     
     def get_document(self, category: str, doc_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -35,18 +30,22 @@ class S3DocumentService(DocumentInterface):
         Returns:
             The document data as a dictionary, or None if not found
         """
-        try:
-            key = f"documents/{category}/{doc_id}.json"
-            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=key)
-            document = json.loads(response['Body'].read().decode('utf-8'))
-            return document
-        except ClientError as e:
-            if e.response['Error']['Code'] == 'NoSuchKey':
-                logger.warning(f"No document found with ID {doc_id} in category {category}")
-                return None
-            else:
-                logger.error(f"Error retrieving document {doc_id} from S3: {str(e)}")
-                return None
+        document = self.s3_service.get_file(f"docs/{category}", doc_id)
+        if document['content_type'] == 'application/json':
+                content = json.loads(document['content'])
+                content['id'] = document['id']
+                content['category'] = category
+                return content
+        elif document['content_type'] == 'text/markdown':
+            return {
+                'id': document['id'],
+                'category': category,
+                'title': document['id'],
+                'content': document['content'],
+                'created_at': document["created_at"],
+                'updated_at': document["created_at"]
+            }
+        return None
     
     def list_documents(self, category: Optional[str] = None) -> List[Dict[str, Any]]:
         """
@@ -63,74 +62,71 @@ class S3DocumentService(DocumentInterface):
         try:
             # If category is provided, list only documents in that category
             if category:
-                prefix = f"documents/{category}/"
+                prefix = f"docs/{category}"
             else:
-                prefix = "documents/"
+                prefix = "docs"
             
-            paginator = self.s3_client.get_paginator('list_objects_v2')
+            files = self.s3_service.list_files(prefix)
             
-            for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
-                if 'Contents' in page:
-                    for obj in page['Contents']:
-                        # Skip directory objects
-                        if obj['Key'].endswith('/'):
-                            continue
+            for file_key in files:
+                # Skip directory objects
+                if file_key.endswith('/'):
+                    continue
+                
+                # Only process JSON and Markdown files
+                if not (file_key.endswith('.json') or file_key.endswith('.md')):
+                    continue
+                
+                try:
+                    # Extract category and document ID from key
+                    # Format: docs/{category}/{doc_id}.json or docs/{category}/{doc_id}.md
+                    parts = file_key.split('/')
+                    category = parts[-2]
+                    doc_id = parts[-1].split('.')[0]
+                    doc_ext = parts[-1].split('.')[-1]
+                    document = self.get_document(f"{category}", f"{doc_id}.{doc_ext}")
+                    if document:
+                       
+                        documents.append(document)
                         
-                        # Only process JSON files
-                        if not obj['Key'].endswith('.json'):
-                            continue
-                        
-                        try:
-                            # Extract category and document ID from key
-                            # Format: documents/{category}/{doc_id}.json
-                            parts = obj['Key'].split('/')
-                            if len(parts) >= 3:
-                                doc_category = parts[1]
-                                doc_id = parts[2].replace('.json', '')
-                                
-                                # Get the document
-                                document = self.get_document(doc_category, doc_id)
-                                if document:
-                                    # Add category and ID to the document
-                                    document['category'] = doc_category
-                                    document['id'] = doc_id
-                                    documents.append(document)
-                        except Exception as e:
-                            logger.error(f"Error processing document {obj['Key']}: {str(e)}")
+                except Exception as e:
+                    logger.error(f"Error processing document {file_key}: {str(e)}")
         except ClientError as e:
             logger.error(f"Error listing documents from S3: {str(e)}")
         
         return documents
     
-    def add_document(self, category: str, doc_data: Dict[str, Any]) -> str:
+    def add_document(self, category: str, doc_data: Union[Dict[str, Any], str]) -> str:
         """
         Add a new document to the specified category.
         
         Args:
             category: The document category
-            doc_data: The document data
+            doc_data: The document data (either a dictionary for JSON or a string for Markdown)
             
         Returns:
             The ID of the created document
         """
         try:
             # Generate a document ID if not provided
-            doc_id = doc_data.get('id', str(uuid.uuid4()))
+            doc_id = str(uuid.uuid4())
             
-            # Add metadata
-            doc_data['id'] = doc_id
-            doc_data['category'] = category
-            doc_data['created_at'] = datetime.utcnow().isoformat()
-            doc_data['updated_at'] = datetime.utcnow().isoformat()
+            # Determine the content type and key
+            if isinstance(doc_data, dict):
+                content_type = 'application/json'
+                key = f"docs/{category}/{doc_id}.json"
+                doc_data['id'] = doc_id
+                doc_data['category'] = category
+                doc_data['created_at'] = datetime.utcnow().isoformat()
+                doc_data['updated_at'] = datetime.utcnow().isoformat()
+            elif isinstance(doc_data, str):
+                content_type = 'text/markdown'
+                key = f"docs/{category}/{doc_id}.md"
+            else:
+                raise ValueError("Unsupported document type")
             
             # Save to S3
-            key = f"documents/{category}/{doc_id}.json"
-            self.s3_client.put_object(
-                Bucket=self.bucket_name,
-                Key=key,
-                Body=json.dumps(doc_data).encode('utf-8'),
-                ContentType='application/json'
-            )
+            self.s3_service.add_file(doc_id, doc_data, f"docs/{category}")
             
             return doc_id
         except ClientError as e:
@@ -162,13 +158,7 @@ class S3DocumentService(DocumentInterface):
             doc_data['updated_at'] = datetime.utcnow().isoformat()
             
             # Save to S3
-            key = f"documents/{category}/{doc_id}.json"
-            self.s3_client.put_object(
-                Bucket=self.bucket_name,
-                Key=key,
-                Body=json.dumps(doc_data).encode('utf-8'),
-                ContentType='application/json'
-            )
+            self.s3_service.add_file(doc_id, doc_data, f"docs/{category}")
             
             return True
         except ClientError as e:
@@ -187,11 +177,7 @@ class S3DocumentService(DocumentInterface):
             True if successful, False otherwise
         """
         try:
-            key = f"documents/{category}/{doc_id}.json"
-            self.s3_client.delete_object(
-                Bucket=self.bucket_name,
-                Key=key
-            )
+            self.s3_service.delete_file(f"docs/{category}", doc_id)
             return True
         except ClientError as e:
             logger.error(f"Error deleting document {doc_id} from S3: {str(e)}")
@@ -204,23 +190,7 @@ class S3DocumentService(DocumentInterface):
         Returns:
             A list of category names
         """
-        categories = set()
-        
-        try:
-            # List all objects with the documents/ prefix
-            paginator = self.s3_client.get_paginator('list_objects_v2')
-            
-            for page in paginator.paginate(Bucket=self.bucket_name, Prefix="documents/", Delimiter='/'):
-                if 'CommonPrefixes' in page:
-                    for prefix in page['CommonPrefixes']:
-                        # Extract category from prefix
-                        # Format: documents/{category}/
-                        category = prefix['Prefix'].split('/')[1]
-                        categories.add(category)
-        except ClientError as e:
-            logger.error(f"Error listing categories from S3: {str(e)}")
-        
-        return list(categories)
+        return self.s3_service.list_directories("docs")
     
     def get_documents_by_ids(self, category: str, doc_ids: List[str]) -> List[Dict[str, Any]]:
         """
@@ -244,4 +214,3 @@ class S3DocumentService(DocumentInterface):
                 documents.append(document)
         
         return documents
-

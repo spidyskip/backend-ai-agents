@@ -12,7 +12,8 @@ from app.services.documents.documents_manager import get_document_service
 from app.schemas import (
     CreateAgentRequest, AgentResponse, ChatRequest, ChatResponse,
     ConversationCreate, ConversationSchema, ConversationWithMessages,
-    MessageCreate, MessageSchema, UpdateAgentRequest, DocumentResponse, DocumentCreate
+    MessageCreate, MessageSchema, UpdateAgentRequest, DocumentResponse, DocumentCreate,
+    UpdateConversationRequest
 )
 from app.config import settings, DatabaseType
 
@@ -321,6 +322,37 @@ async def get_conversation(
     
     return conversation
 
+@app.patch("/conversations/{conversation_id}", response_model=ConversationSchema, tags=["Conversations"])
+async def update_conversation(
+    conversation_id: str,
+    request: UpdateConversationRequest
+):
+    """Update the title of a specific conversation"""
+    # Check if we're on Vercel without S3
+    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+        raise HTTPException(status_code=400, detail="Cannot update conversations in Vercel environment without S3")
+    
+    # Get database service
+    db_service = get_db_service()
+    
+    # Get conversation
+    conversation = db_service.get_conversation(conversation_id)
+    
+    if not conversation:
+        raise HTTPException(status_code=404, detail=f"Conversation with ID {conversation_id} not found")
+    
+    # Update the conversation title
+    try:
+        update_data = {"title": request.title}
+        success = db_service.update_conversation(conversation_id, update_data)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update conversation")
+        
+        updated_conversation = db_service.get_conversation(conversation_id)
+        return updated_conversation
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Route to add a message to a conversation
 @app.post("/conversations/{conversation_id}/messages", response_model=MessageSchema, tags=["Messages"])
 async def add_message(
@@ -409,7 +441,6 @@ async def get_messages(
     messages = db_service.get_conversation_messages(conversation_id)
     return messages
 
-
 # Route get list documents
 @app.get("/documents", response_model=List[DocumentResponse], tags=["Documents"])
 async def list_documents():
@@ -440,3 +471,33 @@ async def add_document(
         return created_document
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/documents/{category_id}/{doc_id}", response_model=DocumentResponse, tags=["Documents"])
+async def get_document(
+    category: str,
+    doc_id: str
+):
+    """List all available documents in the database"""
+    # Check if we're on Vercel without S3
+    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+        return []  # Return empty list on Vercel without S3
+    document_service = get_document_service()
+    try:
+        document = document_service.get_document(category, [doc_id])
+        if not document:
+            raise HTTPException(status_code=404, detail=f"Document with ID {doc_id} not found in category {category}")
+        return document
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/documents/categories", tags=["Documents"])
+async def list_categories():
+    """List all available document categories"""
+    # Check if we're on Vercel without S3
+    if is_vercel and mock_vercel and not settings.USE_S3_STORAGE:
+        return []  # Return empty list on Vercel without S3
+    
+    document_service = get_document_service()
+    categories = document_service.list_categories()
+
+    return {"categories": categories}

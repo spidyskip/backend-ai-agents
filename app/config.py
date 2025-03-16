@@ -13,7 +13,7 @@ class DatabaseType(str, Enum):
 class DatabaseStorageType(str, Enum):
     LOCAL = "local"
     S3 = "s3"
-
+    
 class Settings(BaseSettings):
     APP_NAME: str = "Dynamic Agent Backend"
     APP_VERSION: str = "1.0.0"

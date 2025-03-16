@@ -81,6 +81,9 @@ class ConversationSchema(BaseModel):
     class Config:
         from_attributes = True
 
+class UpdateConversationRequest(BaseModel):
+    title: str
+
 # Message base schema
 class MessageBase(BaseModel):
     role: str

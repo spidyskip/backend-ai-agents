@@ -18,163 +18,169 @@ class S3Service:
             's3',
             region_name=settings.S3_REGION,
             aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY
+            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+            endpoint_url=settings.S3_ENDPOINT_URL
         )
     
-    def get_doc(self, doc_id: str, folder: str = "docs") -> Optional[Union[Dict[str, Any], str]]:
+    def get_file(self, folder: str, doc_id: str ) -> Optional[Union[Dict[str, Any], str]]:
         """
         Retrieve a document from S3.
         
         Args:
             doc_id: The ID of the document.
+            folder: The folder where the document is stored.
             
         Returns:
             The document as a dictionary if JSON, or as a string if Markdown or plain text, or None if not found.
         """
         try:
-            # Determine the file extension
-            extensions = ['json', 'md', 'txt']
-            for ext in extensions:
-                key = f"{folder}/{doc_id}.{ext}"
-                try:
-                    response = self.s3_client.get_object(Bucket=self.bucket_name, Key=key)
-                    content = response['Body'].read().decode('utf-8')
-                    
-                    if ext == 'json':
-                        return json.loads(content)
-                    else:
-                        return content
-                except ClientError as e:
-                    if e.response['Error']['Code'] == 'NoSuchKey':
-                        continue
-                    else:
-                        logger.error(f"Error retrieving document {doc_id} from S3: {str(e)}")
-                        return None
-            
-            logger.warning(f"No document found for ID {doc_id} in S3")
-            return None
-        except ClientError as e:
-            logger.error(f"Error retrieving document {doc_id} from S3: {str(e)}")
-            return None
-    
-    def get_agent_prompt(self, agent_id: str) -> Optional[str]:
-        """
-        Retrieve an agent prompt from S3.
-        
-        Args:
-            agent_id: The ID of the agent.
-            
-        Returns:
-            The agent prompt as a string, or None if not found.
-        """
-        try:
-            key = f"agents/{agent_id}/prompt.txt"
+            key = f"{folder}/{doc_id}"
             response = self.s3_client.get_object(Bucket=self.bucket_name, Key=key)
-            prompt = response['Body'].read().decode('utf-8')
-            return prompt
+            
+            # Check the content type
+            content_type = response.get('ContentType')
+            if not content_type:
+                # Infer content type based on file extension
+                if doc_id.endswith('.json'):
+                    content_type = 'application/json'
+                elif doc_id.endswith('.md'):
+                    content_type = 'text/markdown'
+                else:
+                    logger.warning(f"Unsupported file extension for document ID {doc_id}")
+                    return None
+            
+            if content_type == 'application/json' or content_type == 'text/markdown':
+                # Handle JSON and Markdown content
+                content = response['Body'].read().decode('utf-8')
+                document = {
+                    'folder': folder,
+                    'id': doc_id,
+                    'content_type': content_type,
+                    'content': content,
+                    "created_at": response['LastModified'].isoformat(),
+                    "updated_at": response['LastModified'].isoformat()
+                }
+            else:
+                logger.warning(f"Unsupported content type: {content_type}")
+                return None
+            
+            return document
         except ClientError as e:
             if e.response['Error']['Code'] == 'NoSuchKey':
-                logger.warning(f"No prompt found for agent {agent_id} in S3")
+                logger.warning(f"No document found with ID {doc_id} in folder {folder}")
                 return None
             else:
-                logger.error(f"Error retrieving prompt for agent {agent_id} from S3: {str(e)}")
+                logger.error(f"Error retrieving document {doc_id} from S3: {str(e)}")
                 return None
     
-    def save_agent_prompt(self, agent_id: str, prompt: str) -> bool:
+    def add_file(self, doc_id: str, content: Union[Dict[str, Any], str], folder: str ) -> bool:
         """
-        Save an agent prompt to S3.
+        Add a file to S3.
         
         Args:
-            agent_id: The ID of the agent.
-            prompt: The prompt to save.
+            doc_id: The ID of the document.
+            content: The content of the document.
+            folder: The folder where the document will be stored.
             
         Returns:
             True if successful, False otherwise.
         """
         try:
-            key = f"agents/{agent_id}/prompt.txt"
-            self.s3_client.put_object(
-                Bucket=self.bucket_name,
-                Key=key,
-                Body=prompt.encode('utf-8'),
-                ContentType='text/plain'
-            )
-            return True
-        except ClientError as e:
-            logger.error(f"Error saving prompt for agent {agent_id} to S3: {str(e)}")
-            return False
-    
-    def get_agent_config(self, agent_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Retrieve an agent configuration from S3.
-        
-        Args:
-            agent_id: The ID of the agent.
-            
-        Returns:
-            The agent configuration as a dictionary, or None if not found.
-        """
-        try:
-            key = f"agents/{agent_id}/config.json"
-            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=key)
-            config = json.loads(response['Body'].read().decode('utf-8'))
-            return config
-        except ClientError as e:
-            if e.response['Error']['Code'] == 'NoSuchKey':
-                logger.warning(f"No configuration found for agent {agent_id} in S3")
-                return None
+            if isinstance(content, dict):
+                key = f"{folder}/{doc_id}"
+                body = json.dumps(content).encode('utf-8')
+                content_type = 'application/json'
             else:
-                logger.error(f"Error retrieving configuration for agent {agent_id} from S3: {str(e)}")
-                return None
-    
-    def save_agent_config(self, agent_id: str, config: Dict[str, Any]) -> bool:
-        """
-        Save an agent configuration to S3.
-        
-        Args:
-            agent_id: The ID of the agent.
-            config: The configuration to save.
-            
-        Returns:
-            True if successful, False otherwise.
-        """
-        try:
-            key = f"agents/{agent_id}/config.json"
+                key = f"{folder}/{doc_id}"
+                body = content.encode('utf-8')
+                content_type = 'text/markdown'
             self.s3_client.put_object(
                 Bucket=self.bucket_name,
                 Key=key,
-                Body=json.dumps(config).encode('utf-8'),
-                ContentType='application/json'
+                Body=body,
+                ContentType=content_type
             )
             return True
         except ClientError as e:
-            logger.error(f"Error saving configuration for agent {agent_id} to S3: {str(e)}")
+            logger.error(f"Error adding document {doc_id} to S3: {str(e)}")
             return False
     
-    def list_agents(self) -> List[str]:
+    def list_files(self, folder: str) -> List[str]:
         """
-        List all agents in the S3 bucket.
+        List all files in a directory.
         
+        Args:
+            folder: The folder to list files from.
+            
         Returns:
-            A list of agent IDs.
+            A list of file names.
         """
         try:
-            response = self.s3_client.list_objects_v2(
-                Bucket=self.bucket_name,
-                Prefix="agents/",
-                Delimiter="/"
-            )
-            
-            agent_ids = []
-            if 'CommonPrefixes' in response:
-                for prefix in response['CommonPrefixes']:
-                    # Extract agent ID from prefix (format: "agents/{agent_id}/")
-                    prefix_path = prefix['Prefix']
-                    agent_id = prefix_path.split('/')[1]
-                    agent_ids.append(agent_id)
-            
-            return agent_ids
+            response = self.s3_client.list_objects_v2(Bucket=self.bucket_name, Prefix=f"{folder}/")
+            files = []
+            if 'Contents' in response:
+                for obj in response['Contents']:
+                    files.append(obj['Key'])
+            return files
         except ClientError as e:
-            logger.error(f"Error listing agents in S3: {str(e)}")
+            logger.error(f"Error listing files in directory {folder}: {str(e)}")
             return []
-
+    
+    def list_directories(self, folder: str) -> List[str]:
+        """
+        List all available directories in a folder.
+        
+        Returns:
+            A list of category names
+        """
+        categories = set()
+        
+        try:
+            # List all objects with the documents/ prefix
+            paginator = self.s3_client.get_paginator('list_objects_v2')
+            
+            for page in paginator.paginate(Bucket=self.bucket_name, Prefix=f"{folder}/", Delimiter='/'):
+                if 'CommonPrefixes' in page:
+                    for prefix in page['CommonPrefixes']:
+                        # Extract category from prefix
+                        # Format: documents/{category}/
+                        category = prefix['Prefix'].split('/')[1]
+                        categories.add(category)
+        except ClientError as e:
+            logger.error(f"Error listing categories from S3: {str(e)}")
+        
+        return list(categories)
+    
+    def delete_file(self, folder: str, doc_id: str ) -> bool:
+        """
+        Delete a file from S3.
+        
+        Args:
+            doc_id: The ID of the document.
+            folder: The folder where the document is stored.
+            
+        Returns:
+            True if successful, False otherwise.
+        """
+        try:
+            key = f"{folder}/{doc_id}"
+            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=key)
+            
+            # Check the content type
+            content_type = response.get('ContentType')
+            if not content_type:
+                # Infer content type based on file extension
+                if doc_id.endswith('.json'):
+                    content_type = 'application/json'
+                elif doc_id.endswith('.md'):
+                    content_type = 'text/markdown'
+                else:
+                    logger.warning(f"Unsupported file extension for document ID {doc_id}")
+                    return None
+            
+            self.s3_client.delete_object(Bucket=self.bucket_name, Key=key)
+            return True
+        except ClientError as e:
+            logger.error(f"Error deleting document {doc_id} from S3: {str(e)}")
+            return False
+                

@@ -72,7 +72,7 @@ class ConversationCreate(BaseModel):
 # Conversation schema
 class ConversationSchema(BaseModel):
     id: str
-    agent_id: str
+    agent_id: Optional[str] = None
     user_id: Optional[str] = None
     title: Optional[str] = None
     created_at: datetime
@@ -80,6 +80,9 @@ class ConversationSchema(BaseModel):
     
     class Config:
         from_attributes = True
+
+class UpdateConversationRequest(BaseModel):
+    title: str
 
 # Message base schema
 class MessageBase(BaseModel):
@@ -94,6 +97,8 @@ class MessageCreate(MessageBase):
 class MessageSchema(MessageBase):
     id: str
     conversation_id: str
+    user_id: Optional[str] = None
+    agent_id: Optional[str] = None
     created_at: datetime
     
     class Config:
@@ -152,3 +157,7 @@ class DocumentResponse(DocumentBase):
     created_at: str
     updated_at: str
 
+class DocumentCreate(BaseModel):
+    title: str
+    content: str
+    metadata: Optional[Dict[str, Any]] = None

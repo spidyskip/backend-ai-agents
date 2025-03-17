@@ -20,11 +20,6 @@ from app.database import get_db_service
 from app.services.database.interface import DatabaseInterface
 from app.services.documents.documents_manager import get_document_service
 
-# Import S3 service if enabled
-if settings.USE_S3_STORAGE:
-    from app.services.storage.s3_service import S3Service
-    s3_service = S3Service()
-
 logger = logging.getLogger(__name__)
 
 class AgentManager:
@@ -72,13 +67,6 @@ class AgentManager:
             keywords_list = existing_agent.get("keywords", [])
             additional_query_dict = existing_agent.get("additional_query", {})
             document_refs_dict = existing_agent.get("document_refs", {})
-            
-            # Check if we should use S3 for prompt
-            if settings.USE_S3_STORAGE:
-                # Try to get prompt from S3
-                s3_prompt = s3_service.get_agent_prompt(agent_id_str)
-                if s3_prompt:
-                    prompt_str = s3_prompt
             
             # Select the appropriate model
             if "claude" in model_name_str.lower():
@@ -199,20 +187,6 @@ class AgentManager:
         # Store additional information
         AgentManager.agent_additional_query[agent_id] = additional_query
         
-        # Save to S3 if enabled
-        if settings.USE_S3_STORAGE:
-            s3_service.save_agent_prompt(agent_id, prompt)
-            s3_service.save_agent_config({
-                "id": agent_id,
-                "name": name,
-                "model_name": model_name,
-                "tools": tool_names,
-                "categories": categories,
-                "keywords": keywords,
-                "additional_query": additional_query,
-                "document_refs": document_refs
-            })
-        
         # Persist to database
         db_service.create_agent({
             "id": agent_id,
@@ -281,18 +255,6 @@ class AgentManager:
         # Update in database
         db_service.update_agent(agent_id, updated_agent)
         
-        # Update in S3 if enabled
-        if settings.USE_S3_STORAGE:
-            if "prompt" in update_data:
-                s3_service.save_agent_prompt(agent_id, update_data["prompt"])
-            
-            s3_config = s3_service.get_agent_config(agent_id)
-            if s3_config:
-                for key, value in update_data.items():
-                    if key != "prompt":  # Prompt is stored separately
-                        s3_config[key] = value
-                s3_service.save_agent_config(agent_id, s3_config)
-        
         # Recreate the agent in memory
         # Remove the old agent
         if agent_id in AgentManager.agents:
@@ -339,33 +301,7 @@ class AgentManager:
             # Try to load from database or S3
             db_agent = db_service.get_agent(agent_id)
             
-            if not db_agent:
-                # If not in database, check S3 if enabled
-                if settings.USE_S3_STORAGE:
-                    s3_config = s3_service.get_agent_config(agent_id)
-                    if s3_config:
-                        # Get prompt from S3
-                        prompt = s3_service.get_agent_prompt(agent_id) or ""
-                        
-                        # Create agent from S3 data
-                        AgentManager.create_agent(
-                            agent_id,
-                            s3_config.get("name", ""),
-                            prompt,
-                            s3_config.get("model_name", ""),
-                            s3_config.get("tools", []),
-                            s3_config.get("categories", []),
-                            s3_config.get("keywords", []),
-                            s3_config.get("additional_query", {}),
-                            s3_config.get("document_refs", {})
-                        )
-                        return {
-                            "agent": AgentManager.agents[agent_id],
-                            "checkpointer": AgentManager.checkpointers[agent_id],
-                            "metadata": AgentManager.agent_metadata[agent_id],
-                            "additional_query": AgentManager.agent_additional_query.get(agent_id, {})
-                        }
-                
+            if not db_agent:             
                 raise ValueError(f"No agent found with ID '{agent_id}'.")
             
             # Extract values from database
@@ -378,13 +314,6 @@ class AgentManager:
             keywords_list = db_agent.get("keywords", [])
             additional_query_dict = db_agent.get("additional_query", {})
             document_refs_dict = db_agent.get("document_refs", {})
-            
-            # Check if we should use S3 for prompt
-            if settings.USE_S3_STORAGE:
-                # Try to get prompt from S3
-                s3_prompt = s3_service.get_agent_prompt(agent_id_str)
-                if s3_prompt:
-                    prompt_str = s3_prompt
             
             # Recreate the agent
             AgentManager.create_agent(
@@ -427,13 +356,6 @@ class AgentManager:
             db_agent["additional_query"] = additional_query
             db_service.update_agent(agent_id, db_agent)
         
-        # Update in S3 if enabled
-        if settings.USE_S3_STORAGE:
-            s3_config = s3_service.get_agent_config(agent_id)
-            if s3_config:
-                s3_config["additional_query"] = additional_query
-                s3_service.save_agent_config(agent_id, s3_config)
-        
         return additional_query
     
     @staticmethod
@@ -458,13 +380,6 @@ class AgentManager:
             db_agent["document_refs"] = document_refs
             db_service.update_agent(agent_id, db_agent)
         
-        # Update in S3 if enabled
-        if settings.USE_S3_STORAGE:
-            s3_config = s3_service.get_agent_config(agent_id)
-            if s3_config:
-                s3_config["document_refs"] = document_refs
-                s3_service.save_agent_config(agent_id, s3_config)
-        
         return document_refs
     
     @staticmethod
@@ -474,29 +389,6 @@ class AgentManager:
         
         # Get all agents from database
         db_agents = db_service.list_agents()
-        
-        # If S3 storage is enabled, merge with agents from S3
-        if settings.USE_S3_STORAGE:
-            s3_agent_ids = s3_service.list_agents()
-            db_agent_ids = [agent["id"] for agent in db_agents]
-            
-            # Add agents from S3 that are not in the database
-            for agent_id in s3_agent_ids:
-                if agent_id not in db_agent_ids:
-                    s3_config = s3_service.get_agent_config(agent_id)
-                    if s3_config:
-                        prompt = s3_service.get_agent_prompt(agent_id) or ""
-                        db_agents.append({
-                            "id": agent_id,
-                            "name": s3_config.get("name", ""),
-                            "prompt": prompt,
-                            "model_name": s3_config.get("model_name", ""),
-                            "tools": s3_config.get("tools", []),
-                            "categories": s3_config.get("categories", []),
-                            "keywords": s3_config.get("keywords", []),
-                            "additional_query": s3_config.get("additional_query", {}),
-                            "document_refs": s3_config.get("document_refs", {})
-                        })
         
         return [
             {
@@ -539,31 +431,6 @@ class AgentManager:
                     loaded_count += 1
                 except Exception as e:
                     logger.error(f"Error loading agent {db_agent['id']}: {str(e)}")
-        
-        # If S3 storage is enabled, load agents from S3 as well
-        if settings.USE_S3_STORAGE:
-            s3_agent_ids = s3_service.list_agents()
-            
-            for agent_id in s3_agent_ids:
-                if agent_id not in AgentManager.agents:
-                    try:
-                        s3_config = s3_service.get_agent_config(agent_id)
-                        if s3_config:
-                            prompt = s3_service.get_agent_prompt(agent_id) or ""
-                            AgentManager.create_agent(
-                                agent_id,
-                                s3_config.get("name", ""),
-                                prompt,
-                                s3_config.get("model_name", ""),
-                                s3_config.get("tools", []),
-                                s3_config.get("categories", []),
-                                s3_config.get("keywords", []),
-                                s3_config.get("additional_query", {}),
-                                s3_config.get("document_refs", {})
-                            )
-                            loaded_count += 1
-                    except Exception as e:
-                        logger.error(f"Error loading agent {agent_id} from S3: {str(e)}")
         
         logger.info(f"Loaded {loaded_count} agents from storage")
     
@@ -711,9 +578,12 @@ class AgentManager:
                 context_message += f"{key}: {value}\n"
         
         # Add document content if available and requested
+        document_refs = ""
         if include_documents and "document_refs" in metadata and metadata["document_refs"]:
             document_service = get_document_service()
             context_message += "\nReference Documents:\n"
+            context_message += "\Category Documents:\n"
+            context_message += ", ".join(metadata["document_refs"].keys())
             
             for category, doc_ids in metadata["document_refs"].items():
                 if doc_ids:
@@ -723,11 +593,11 @@ class AgentManager:
                         documents = document_service.get_documents_by_ids(category, doc_ids)
                     
                     if documents:
-                        context_message += f"\n## {category.upper()} DOCUMENTS\n"
+                        document_refs += f"\n## {category.upper()} DOCUMENTS\n"
                         
                         for doc in documents:
-                            context_message += f"\n### {doc.get('title', 'Untitled Document')}\n"
-                            context_message += f"{doc.get('content', '')}\n"
+                            document_refs += f"\n### {doc.get('title', 'Untitled Document')}\n"
+                            document_refs += f"{doc.get('content', '')}\n"
 
         # Get database service
         db_service = get_db_service()
@@ -735,7 +605,7 @@ class AgentManager:
         # Create input for the agent with context
         agent_input = {
             "messages": [
-                {"role": "system", "content": context_message},
+                {"role": "system", "content": context_message + "\n" + document_refs},
             ]
         }
 
@@ -775,6 +645,7 @@ class AgentManager:
             conversation_data = {
                 "id": thread_id,
                 "agent_id": agent_id,
+                "user_id": user_id,
                 "title": f"Conversation {thread_id[:8]}"
             }
             

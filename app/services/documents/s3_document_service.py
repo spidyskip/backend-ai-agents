@@ -42,6 +42,7 @@ class S3DocumentService(DocumentInterface):
                 'category': category,
                 'title': document['id'],
                 'content': document['content'],
+                'content_length': document.get('content_length', None),
                 'created_at': document["created_at"],
                 'updated_at': document["created_at"]
             }

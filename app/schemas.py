@@ -154,6 +154,7 @@ class UpdateDocumentRequest(DocumentBase):
 class DocumentResponse(DocumentBase):
     id: str
     category: str
+    content_length: Optional[int] = None
     created_at: str
     updated_at: str
 

@@ -36,7 +36,6 @@ class S3Service:
         try:
             key = f"{folder}/{doc_id}"
             response = self.s3_client.get_object(Bucket=self.bucket_name, Key=key)
-            
             # Check the content type
             content_type = response.get('ContentType')
             if not content_type:
@@ -57,6 +56,7 @@ class S3Service:
                     'id': doc_id,
                     'content_type': content_type,
                     'content': content,
+                    'content_length': response['ContentLength'],
                     "created_at": response['LastModified'].isoformat(),
                     "updated_at": response['LastModified'].isoformat()
                 }

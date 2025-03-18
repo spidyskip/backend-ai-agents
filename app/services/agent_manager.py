@@ -582,7 +582,7 @@ class AgentManager:
         if include_documents and "document_refs" in metadata and metadata["document_refs"]:
             document_service = get_document_service()
             context_message += "\nReference Documents:\n"
-            context_message += "\Category Documents:\n"
+            context_message += "\nCategory Documents:\n"
             context_message += ", ".join(metadata["document_refs"].keys())
             
             for category, doc_ids in metadata["document_refs"].items():

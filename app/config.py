@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     
     # Logging settings
     LOG_LEVEL: str = "INFO"
+
+    # Load additional settings from environment variables
+    ENABLE_SUPERVISOR_AGENT: bool = os.getenv("ENABLE_SUPERVISOR_AGENT", "false").lower() == "true"
+
     
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
     

@@ -5,6 +5,7 @@ import re
 from collections import Counter
 from pydantic import SecretStr
 from datetime import datetime
+import asyncio
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
@@ -19,6 +20,7 @@ from app.tools import AVAILABLE_TOOLS
 from app.database import get_db_service
 from app.services.database.interface import DatabaseInterface
 from app.services.documents.documents_manager import get_document_service
+from app.services.supervisor_agent import SupervisorAgent
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,8 @@ class AgentManager:
     agent_metadata = {}
     # Store additional information for agents
     agent_additional_query = {}
+
+    supervisor_agent: Optional[SupervisorAgent] = SupervisorAgent() if settings.ENABLE_SUPERVISOR_AGENT else None
     
     @staticmethod
     def create_agent(
@@ -459,6 +463,26 @@ class AgentManager:
         
         # Simple keyword matching
         query_lower = query.lower()
+        if AgentManager.supervisor_agent != None:
+            agents = {
+                key: {k: v for k, v in value.items() if k != "prompt"}
+                for key, value in AgentManager.agent_metadata.items()
+            }
+            try:
+                result = AgentManager.supervisor_agent.select_agent(query=query_lower, thread_id="supervisor", agents=agents)
+                
+                if result.get("response") in AgentManager.agent_metadata:  # Check if 'response' exists in result
+                    logger.info(f"Supervisor agent selected agent {result.get('response')}")
+                    agent_id = result.get("response")
+                    return {
+                            "agent_id": agent_id,
+                            "confidence": 0,
+                            "name": AgentManager.agent_metadata[agent_id]["name"]
+                        }
+            except Exception as e:
+                logger.error(f"Error invoking supervisor agent: {e}")
+                pass
+        
         scores = {}
         
         for agent_id, metadata in AgentManager.agent_metadata.items():
@@ -528,7 +552,7 @@ class AgentManager:
         """
         # If no agent_id provided, select the most appropriate agent
         if not agent_id:
-            selected_agent = AgentManager.select_agent_for_query(query)
+            selected_agent = AgentManager.select_agent_for_query(query=query)
             agent_id = selected_agent["agent_id"]
             agent_name = selected_agent["name"]
             confidence = selected_agent["confidence"]

@@ -110,19 +110,24 @@ class S3DocumentService(DocumentInterface):
         """
         try:
             # Generate a document ID if not provided
-            doc_id = str(uuid.uuid4())
+            doc_title = doc_data["title"]
             
             # Determine the content type and key
             if isinstance(doc_data, dict):
                 content_type = 'application/json'
-                key = f"docs/{category}/{doc_id}.json"
+                key = f"docs/{category}/{doc_title}.json"
+                doc_id = f"{doc_title}.json"
                 doc_data['id'] = doc_id
                 doc_data['category'] = category
                 doc_data['created_at'] = datetime.utcnow().isoformat()
                 doc_data['updated_at'] = datetime.utcnow().isoformat()
             elif isinstance(doc_data, str):
                 content_type = 'text/markdown'
-                key = f"docs/{category}/{doc_id}.md"
+                key = f"docs/{category}/{doc_title}.md"
+                doc_id = f"{doc_title}.md"
+                doc_data['category'] = category
+                doc_data['created_at'] = datetime.utcnow().isoformat()
+                doc_data['updated_at'] = datetime.utcnow().isoformat()
             else:
                 raise ValueError("Unsupported document type")
             

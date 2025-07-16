@@ -100,6 +100,8 @@ def init_db():
         return None
 
 if __name__ == "__main__":
+    from app.database import Base, engine
+    Base.metadata.create_all(bind=engine)
     result = init_db()
     if result:
         logger.info("Database initialized successfully with sample agents")

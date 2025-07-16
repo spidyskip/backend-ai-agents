@@ -32,33 +32,43 @@ class LocalDocumentService(DocumentInterface):
         os.makedirs(category_path, exist_ok=True)
         return category_path
     
-    def _get_document_path(self, category: str, doc_id: str) -> str:
-        """Get the path to a document file."""
-        return os.path.join(self._get_category_path(category), f"{doc_id}.json")
+    def _get_document_path(self, category: str, doc_id: str, ext: str = "json") -> str:
+        """Get the path to a document file with the given extension."""
+        return os.path.join(self._get_category_path(category), f"{doc_id}.{ext}")
     
     def get_document(self, category: str, doc_id: str) -> Optional[Dict[str, Any]]:
         """
         Get a document by category and ID.
-        
-        Args:
-            category: The document category
-            doc_id: The document ID
-            
-        Returns:
-            The document data as a dictionary, or None if not found
+        Tries both .json and .md extensions.
         """
-        doc_path = self._get_document_path(category, doc_id)
+        # Try JSON first
+        doc_path_json = self._get_document_path(category, doc_id, "json")
+        doc_path_md = self._get_document_path(category, doc_id, "md")
         
-        if not os.path.exists(doc_path):
+        if os.path.exists(doc_path_json):
+            try:
+                with open(doc_path_json, 'r', encoding='utf-8') as f:
+                    document = json.load(f)
+                    return document
+            except Exception as e:
+                logger.error(f"Error reading JSON document {doc_id}: {str(e)}")
+                return None
+        elif os.path.exists(doc_path_md):
+            try:
+                with open(doc_path_md, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                # Return as a dict for consistency
+                return {
+                    "id": doc_id,
+                    "category": category,
+                    "content": content,
+                    "content_type": "markdown"
+                }
+            except Exception as e:
+                logger.error(f"Error reading Markdown document {doc_id}: {str(e)}")
+                return None
+        else:
             logger.warning(f"No document found with ID {doc_id} in category {category}")
-            return None
-        
-        try:
-            with open(doc_path, 'r', encoding='utf-8') as f:
-                document = json.load(f)
-                return document
-        except Exception as e:
-            logger.error(f"Error reading document {doc_id}: {str(e)}")
             return None
     
     def list_documents(self, category: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -98,101 +108,100 @@ class LocalDocumentService(DocumentInterface):
                         document['category'] = cat
                         document['id'] = doc_id
                         documents.append(document)
+                elif filename.endswith('.md'):
+                    doc_id = filename.replace('.md', '')
+
+                    # Get the document
+                    document = self.get_document(cat, doc_id)
+                    if document:
+                        # Add category and ID to the document
+                        document['category'] = cat
+                        document['id'] = doc_id
+                        document['title'] = doc_id
+                        document['created_at'] = datetime.utcnow().isoformat()
+                        document['updated_at'] = datetime.utcnow().isoformat()
+                        documents.append(document)
+                else:
+                    pass
         
         return documents
     
     def add_document(self, category: str, doc_data: Dict[str, Any]) -> str:
         """
         Add a new document to the specified category.
-        
-        Args:
-            category: The document category
-            doc_data: The document data
-            
-        Returns:
-            The ID of the created document
+        Supports both JSON and Markdown documents.
         """
-        # Generate a document ID if not provided
         doc_id = doc_data.get('id', str(uuid.uuid4()))
-        
-        # Add metadata
         doc_data['id'] = doc_id
         doc_data['category'] = category
         doc_data['created_at'] = datetime.utcnow().isoformat()
         doc_data['updated_at'] = datetime.utcnow().isoformat()
-        
-        # Save to file
-        doc_path = self._get_document_path(category, doc_id)
-        
-        try:
-            with open(doc_path, 'w', encoding='utf-8') as f:
-                json.dump(doc_data, f, ensure_ascii=False, indent=2)
-            
-            return doc_id
-        except Exception as e:
-            logger.error(f"Error adding document: {str(e)}")
-            raise ValueError(f"Failed to add document: {str(e)}")
-    
+
+        content_type = doc_data.get("content_type", "json").lower()
+        if content_type in ["markdown", "md"]:
+            doc_path = self._get_document_path(category, doc_id, "md")
+            try:
+                with open(doc_path, 'w', encoding='utf-8') as f:
+                    f.write(doc_data.get("content", ""))
+                return doc_id
+            except Exception as e:
+                logger.error(f"Error adding Markdown document: {str(e)}")
+                raise ValueError(f"Failed to add Markdown document: {str(e)}")
+        else:
+            doc_path = self._get_document_path(category, doc_id, "json")
+            try:
+                with open(doc_path, 'w', encoding='utf-8') as f:
+                    json.dump(doc_data, f, ensure_ascii=False, indent=2)
+                return doc_id
+            except Exception as e:
+                logger.error(f"Error adding JSON document: {str(e)}")
+                raise ValueError(f"Failed to add JSON document: {str(e)}")
+
     def update_document(self, category: str, doc_id: str, doc_data: Dict[str, Any]) -> bool:
         """
         Update an existing document.
-        
-        Args:
-            category: The document category
-            doc_id: The document ID
-            doc_data: The updated document data
-            
-        Returns:
-            True if successful, False otherwise
+        Supports both JSON and Markdown documents.
         """
-        doc_path = self._get_document_path(category, doc_id)
-        
-        # Check if document exists
-        if not os.path.exists(doc_path):
-            return False
-        
-        try:
-            # Read existing document to get created_at timestamp
-            existing_doc = self.get_document(category, doc_id)
-            
-            # Update metadata
-            doc_data['id'] = doc_id
-            doc_data['category'] = category
-            doc_data['created_at'] = existing_doc.get('created_at', datetime.utcnow().isoformat())
-            doc_data['updated_at'] = datetime.utcnow().isoformat()
-            
-            # Save to file
-            with open(doc_path, 'w', encoding='utf-8') as f:
-                json.dump(doc_data, f, ensure_ascii=False, indent=2)
-            
-            return True
-        except Exception as e:
-            logger.error(f"Error updating document {doc_id}: {str(e)}")
-            return False
-    
+        content_type = doc_data.get("content_type", "json").lower()
+        if content_type in ["markdown", "md"]:
+            doc_path = self._get_document_path(category, doc_id, "md")
+            try:
+                with open(doc_path, 'w', encoding='utf-8') as f:
+                    f.write(doc_data.get("content", ""))
+                return True
+            except Exception as e:
+                logger.error(f"Error updating Markdown document {doc_id}: {str(e)}")
+                return False
+        else:
+            doc_path = self._get_document_path(category, doc_id, "json")
+            try:
+                existing_doc = self.get_document(category, doc_id) or {}
+                doc_data['id'] = doc_id
+                doc_data['category'] = category
+                doc_data['created_at'] = existing_doc.get('created_at', datetime.utcnow().isoformat())
+                doc_data['updated_at'] = datetime.utcnow().isoformat()
+                with open(doc_path, 'w', encoding='utf-8') as f:
+                    json.dump(doc_data, f, ensure_ascii=False, indent=2)
+                return True
+            except Exception as e:
+                logger.error(f"Error updating JSON document {doc_id}: {str(e)}")
+                return False
+
     def delete_document(self, category: str, doc_id: str) -> bool:
         """
         Delete a document.
-        
-        Args:
-            category: The document category
-            doc_id: The document ID
-            
-        Returns:
-            True if successful, False otherwise
+        Deletes both .json and .md files if they exist.
         """
-        doc_path = self._get_document_path(category, doc_id)
-        
-        # Check if document exists
-        if not os.path.exists(doc_path):
-            return False
-        
-        try:
-            os.remove(doc_path)
-            return True
-        except Exception as e:
-            logger.error(f"Error deleting document {doc_id}: {str(e)}")
-            return False
+        deleted = False
+        for ext in ["json", "md"]:
+            doc_path = self._get_document_path(category, doc_id, ext)
+            if os.path.exists(doc_path):
+                try:
+                    os.remove(doc_path)
+                    deleted = True
+                except Exception as e:
+                    logger.error(f"Error deleting document {doc_id} ({ext}): {str(e)}")
+        return deleted
     
     def list_categories(self) -> List[str]:
         """

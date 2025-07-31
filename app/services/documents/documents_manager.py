@@ -16,7 +16,7 @@ def get_document_service() -> DocumentInterface:
     if document_service is not None:
         return document_service
     
-    if getattr(settings, "DOCUMENT_STORAGE_TYPE", None) == "S3":
+    if settings.DOCUMENT_STORAGE_TYPE.S3:
         from app.services.documents.s3_document_service import S3DocumentService
         document_service = S3DocumentService()
     else:
